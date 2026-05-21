@@ -25,6 +25,7 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
+            accept-flake-config = true
             download-buffer-size = 512000000
 
       - name: Use Cachix Cache 📦
