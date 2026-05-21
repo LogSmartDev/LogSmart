@@ -305,6 +305,7 @@ pub async fn init_mongodb() -> Result<mongodb::Client> {
         .map_err(anyhow::Error::from)?;
 
     ensure_report_run_indexes(&client).await?;
+    backfill_missing_report_params_keys_all(&client).await?;
 
     Ok(client)
 }
@@ -331,15 +332,14 @@ async fn ensure_report_run_indexes(client: &mongodb::Client) -> Result<()> {
     Ok(())
 }
 
-async fn backfill_missing_report_params_keys(
-    collection: &mongodb::Collection<ReportRunDocument>,
-    user_id: &str,
-    company_id: &str,
-) -> Result<()> {
+/// One-time startup migration: backfills missing params_key for all report runs.
+/// Previously ran on every create/delete (hot path); now runs once at startup.
+async fn backfill_missing_report_params_keys_all(client: &mongodb::Client) -> Result<()> {
+    let db = LogDb::new(client);
+    let collection = db.report_runs();
+
     let mut cursor = collection
         .find(mongodb::bson::doc! {
-            "user_id": user_id,
-            "company_id": company_id,
             "$or": [
                 { "params_key": { "$exists": false } },
                 { "params_key": "" }
@@ -354,8 +354,6 @@ async fn backfill_missing_report_params_keys(
             .update_one(
                 mongodb::bson::doc! {
                     "report_id": &candidate.report_id,
-                    "user_id": user_id,
-                    "company_id": company_id,
                     "$or": [
                         { "params_key": { "$exists": false } },
                         { "params_key": "" }
@@ -596,31 +594,6 @@ pub async fn update_template(
     Ok(())
 }
 
-/// Updates an existing log template with specific version increment.
-///
-/// # Errors
-/// Returns an error if the database update fails.
-pub async fn update_template_with_version(
-    client: &mongodb::Client,
-    template_name: &str,
-    company_id: &str,
-    schedule: Option<&Schedule>,
-    layout: Option<&TemplateLayout>,
-) -> Result<()> {
-    // This is now redundant given update_template handles versioning,
-    // but we can keep the original signature compatible by forwarding
-    update_template(
-        client,
-        template_name,
-        company_id,
-        schedule,
-        layout,
-        None,
-        None,
-    )
-    .await
-}
-
 /// Renames a log template.
 ///
 /// # Errors
@@ -740,9 +713,6 @@ pub async fn create_report_run(
 
     let normalized_params = normalize_report_params(&report_run.params);
     let params_key = report_params_key(&normalized_params)?;
-
-    backfill_missing_report_params_keys(&collection, &report_run.user_id, &report_run.company_id)
-        .await?;
 
     let filter = mongodb::bson::doc! {
         "user_id": &report_run.user_id,
@@ -887,8 +857,6 @@ pub async fn delete_report_run(
         target.params_key
     };
 
-    backfill_missing_report_params_keys(&collection, user_id, company_id).await?;
-
     tracing::info!(
         target: "report_runs",
         "mongo delete: resolved params_key for report_id={} key_len={}",
@@ -947,48 +915,6 @@ pub async fn get_user_log_entries(
 
     let cursor = db.log_entries().find(filter).await?;
     collect_cursor(cursor).await
-}
-
-pub async fn get_user_log_entries_by_template(
-    client: &mongodb::Client,
-    user_id: &str,
-    company_id: &str,
-    template_name: &str,
-) -> Result<Vec<LogEntry>> {
-    let db = LogDb::new(client);
-    let filter = mongodb::bson::doc! {
-        "user_id": user_id,
-        "company_id": company_id,
-        "template_name": template_name,
-    };
-
-    let cursor = db.log_entries().find(filter).await?;
-    collect_cursor(cursor).await
-}
-
-/// Retrieves the most recently submitted log entry for a user and template.
-///
-/// # Errors
-/// Returns an error if the database query fails.
-pub async fn get_latest_submitted_entry(
-    client: &mongodb::Client,
-    user_id: &str,
-    company_id: &str,
-    template_name: &str,
-) -> Result<Option<LogEntry>> {
-    let db = LogDb::new(client);
-    let filter = mongodb::bson::doc! {
-        "user_id": user_id,
-        "company_id": company_id,
-        "template_name": template_name,
-        "status": mongodb::bson::to_bson(&LogStatus::Submitted)?,
-    };
-
-    db.log_entries()
-        .find_one(filter)
-        .sort(mongodb::bson::doc! { "submitted_at": -1 })
-        .await
-        .map_err(Into::into)
 }
 
 /// Batch version of get_latest_submitted_entry - gets latest submitted entry for multiple templates.
@@ -1065,14 +991,11 @@ pub async fn get_periods_with_entries_batch(
 
 /// Batch version of has_submitted_entry_for_current_period - checks multiple templates at once.
 ///
-/// Uses a simple approach: fetches all submitted entries for the current period for all templates,
-/// then builds a lookup map.
+/// Uses a single query with a wide-enough date range, then validates each entry
+/// against its template's exact period boundaries in memory.
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-///
-/// # Panics
-/// Panics if period boundary calculations fail.
 pub async fn has_submitted_entries_batch(
     client: &mongodb::Client,
     company_id: &str,
@@ -1084,9 +1007,15 @@ pub async fn has_submitted_entries_batch(
 
     let db = LogDb::new(client);
     let template_names: Vec<&str> = templates.iter().map(|(n, _)| *n).collect();
-    let now = chrono::Utc::now();
-    let period_start = now - chrono::Duration::days(400);
-    let period_end = now;
+
+    // Compute the widest possible period bounds across all frequencies
+    let (period_start, period_end) = {
+        let daily = compute_period_bounds(&Frequency::Daily);
+        let yearly = compute_period_bounds(&Frequency::Yearly);
+        let start = std::cmp::min(daily.0, yearly.0);
+        let end = std::cmp::max(daily.1, yearly.1);
+        (start, end)
+    };
 
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
@@ -1102,9 +1031,11 @@ pub async fn has_submitted_entries_batch(
     let entries: Vec<LogEntry> = cursor.try_collect().await?;
 
     let mut results = std::collections::HashMap::new();
-    for (name, _) in templates {
+    for (name, freq) in templates {
+        let (start, end) = compute_period_bounds(freq);
         let has_submitted = entries.iter().any(|e| {
-            e.template_name == *name && is_in_current_period(&e.submitted_at, &e.period, now)
+            e.template_name == *name
+                && e.submitted_at.is_some_and(|ts| ts >= start && ts <= end)
         });
         results.insert(name.to_string(), has_submitted);
     }
@@ -1112,19 +1043,8 @@ pub async fn has_submitted_entries_batch(
     Ok(results)
 }
 
-fn is_in_current_period(
-    submitted_at: &Option<chrono::DateTime<chrono::Utc>>,
-    _period: &str,
-    now: chrono::DateTime<chrono::Utc>,
-) -> bool {
-    let Some(ts) = submitted_at else {
-        return false;
-    };
-
-    ts.date_naive() == now.date_naive()
-}
-
 /// Batch version of get_draft_entry_for_current_period - gets draft entries for multiple templates.
+/// Filters to current period only using the widest period bounds.
 ///
 /// # Errors
 /// Returns an error if the database query fails.
@@ -1139,11 +1059,23 @@ pub async fn get_draft_entries_batch(
     }
 
     let db = LogDb::new(client);
+
+    // Use the widest period bounds to capture all current-period drafts in one query
+    let (period_start, period_end) = {
+        let daily = compute_period_bounds(&Frequency::Daily);
+        let yearly = compute_period_bounds(&Frequency::Yearly);
+        (std::cmp::min(daily.0, yearly.0), std::cmp::max(daily.1, yearly.1))
+    };
+
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
         "company_id": company_id,
         "template_name": { "$in": template_names },
         "status": mongodb::bson::to_bson(&LogStatus::Draft)?,
+        "created_at": {
+            "$gte": mongodb::bson::DateTime::from_system_time(std::time::SystemTime::from(period_start)),
+            "$lte": mongodb::bson::DateTime::from_system_time(std::time::SystemTime::from(period_end)),
+        },
     };
 
     let cursor = db.log_entries().find(filter).await?;
@@ -1243,28 +1175,6 @@ pub async fn has_entry_for_period(
     Ok(result.is_some())
 }
 
-pub async fn get_periods_with_entries(
-    client: &mongodb::Client,
-    company_id: &str,
-    template_name: &str,
-    periods: &[String],
-) -> Result<std::collections::HashSet<String>> {
-    if periods.is_empty() {
-        return Ok(std::collections::HashSet::new());
-    }
-
-    let db = LogDb::new(client);
-    let filter = mongodb::bson::doc! {
-        "company_id": company_id,
-        "template_name": template_name,
-        "period": { "$in": periods }
-    };
-
-    let cursor = db.log_entries().find(filter).await?;
-    let entries: Vec<LogEntry> = cursor.try_collect().await?;
-    Ok(entries.into_iter().map(|e| e.period).collect())
-}
-
 /// Retrieves a draft log entry for the current period and template.
 ///
 /// # Errors
@@ -1319,6 +1229,34 @@ pub async fn update_log_entry(
 
     db.log_entries().update_one(filter, update).await?;
     Ok(())
+}
+
+/// Updates a log entry and returns the updated document in a single round trip.
+///
+/// # Errors
+/// Returns an error if the database update fails.
+pub async fn update_log_entry_with_return(
+    client: &mongodb::Client,
+    entry_id: &str,
+    entry_data: &serde_json::Value,
+) -> Result<Option<LogEntry>> {
+    let db = LogDb::new(client);
+    let filter = mongodb::bson::doc! {
+        "entry_id": entry_id,
+    };
+
+    let update = mongodb::bson::doc! {
+        "$set": {
+            "entry_data": mongodb::bson::to_bson(&entry_data)?,
+            "updated_at": mongodb::bson::to_bson(&chrono::Utc::now())?,
+        }
+    };
+
+    let result = db.log_entries()
+        .find_one_and_update(filter, update)
+        .return_document(ReturnDocument::After)
+        .await?;
+    Ok(result)
 }
 
 pub async fn submit_log_entry(client: &mongodb::Client, entry_id: &str) -> Result<()> {
@@ -1445,13 +1383,14 @@ pub fn parse_time_string(time_str: &str) -> Option<(u32, u32)> {
     Some((hour, minute))
 }
 
+/// Validates that a year is in a reasonable range (>= 2000).
+fn normalize_year(year: i32) -> Option<i32> {
+    if year >= 2000 { Some(year) } else { None }
+}
+
 #[must_use]
 pub fn compute_due_date_for_period(schedule: &Schedule, period: &str) -> Option<chrono::NaiveDate> {
     let parts: Vec<&str> = period.split('/').collect();
-
-    fn normalize_year(year: i32) -> Option<i32> {
-        if year >= 2000 { Some(year) } else { None }
-    }
 
     match schedule.frequency {
         Frequency::Daily => parse_period_to_date(period),
@@ -1605,10 +1544,6 @@ pub fn derive_log_status(
 #[must_use]
 pub fn parse_period_to_date(period: &str) -> Option<chrono::NaiveDate> {
     let parts: Vec<&str> = period.split('/').collect();
-
-    fn normalize_year(year: i32) -> Option<i32> {
-        if year >= 2000 { Some(year) } else { None }
-    }
 
     match parts.len() {
         1 => {

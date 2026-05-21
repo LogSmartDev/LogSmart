@@ -140,7 +140,7 @@ pub async fn list_due_forms_today(
     let mut due_forms = Vec::new();
     let mut seen_forms: HashSet<(String, String)> = HashSet::new();
 
-    for template in needed_templates {
+    for template in &needed_templates {
         let last_submitted = latest_submitted_entries
             .get(&template.template_name)
             .cloned();
@@ -196,13 +196,28 @@ pub async fn list_due_forms_today(
             break;
         }
 
-        if logs_db::is_form_due_today(&template.schedule) {
-            let has_submitted = logs_db::has_submitted_entry_for_current_period(
+        // Batch-check which templates are due today and have no submission
+        let due_today_templates: Vec<&logs_db::TemplateDocument> = needed_templates
+            .iter()
+            .filter(|t| logs_db::is_form_due_today(&t.schedule))
+            .copied()
+            .collect();
+
+        if !due_today_templates.is_empty() {
+            let due_template_names: Vec<String> = due_today_templates
+                .iter()
+                .map(|t| t.template_name.clone())
+                .collect();
+
+            // Single batch query for all submission checks
+            let templates_with_freq: Vec<(&str, &logs_db::Frequency)> = due_today_templates
+                .iter()
+                .map(|t| (t.template_name.as_str(), &t.schedule.frequency))
+                .collect();
+            let submitted_map = logs_db::has_submitted_entries_batch(
                 &state.mongodb,
-                &user.id,
                 &company_id,
-                &template.template_name,
-                &template.schedule.frequency,
+                &templates_with_freq,
             )
             .await
             .map_err(|e| {
@@ -213,55 +228,71 @@ pub async fn list_due_forms_today(
                 )
             })?;
 
-            if !has_submitted {
-                let draft_entry = logs_db::get_draft_entry_for_current_period(
-                    &state.mongodb,
-                    &user.id,
-                    &company_id,
-                    &template.template_name,
-                    &template.schedule.frequency,
+            // Single batch query for all draft entries
+            let draft_map = logs_db::get_draft_entries_batch(
+                &state.mongodb,
+                &user.id,
+                &company_id,
+                &due_template_names,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to get draft entries: {:?}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "Failed to retrieve due forms" })),
                 )
-                .await
-                .ok()
-                .flatten();
+            })?;
 
-                let processed_layout = logs_db::process_template_layout_with_period(
-                    &template.template_layout,
-                    &template.schedule.frequency,
-                );
+            for template in due_today_templates {
+                let has_submitted = submitted_map.get(&template.template_name).copied().unwrap_or(false);
 
-                let period = logs_db::format_period_for_frequency(&template.schedule.frequency);
-                let available_from =
-                    logs_db::get_available_from_datetime(&template.schedule, &period);
-                let due_at = logs_db::get_due_at_datetime(&template.schedule, &period);
+                if !has_submitted {
+                    let draft_entry = draft_map.get(&template.template_name).and_then(|e| e.clone());
 
-                let form_key = (template.template_name.clone(), period.clone());
-                if seen_forms.contains(&form_key) {
-                    continue;
+                    let last_submitted = latest_submitted_entries
+                        .get(&template.template_name)
+                        .cloned();
+
+                    let processed_layout = logs_db::process_template_layout_with_period(
+                        &template.template_layout,
+                        &template.schedule.frequency,
+                    );
+
+                    let period = logs_db::format_period_for_frequency(&template.schedule.frequency);
+                    let available_from =
+                        logs_db::get_available_from_datetime(&template.schedule, &period);
+                    let due_at = logs_db::get_due_at_datetime(&template.schedule, &period);
+
+                    let form_key = (template.template_name.clone(), period.clone());
+                    if seen_forms.contains(&form_key) {
+                        continue;
+                    }
+                    seen_forms.insert(form_key);
+
+                    let status =
+                        logs_db::get_availability_status_for_period(&template.schedule, &period, now);
+
+                    let derived_draft_status = draft_entry.as_ref().map(|e| {
+                        logs_db::derive_log_status(e.status, &template.schedule, &period, now)
+                            .0
+                            .as_str()
+                            .to_string()
+                    });
+
+                    due_forms.push(DueFormInfo {
+                        template_name: template.template_name.clone(),
+                        template_layout: processed_layout,
+                        last_submitted: last_submitted
+                            .as_ref()
+                            .and_then(|e| e.submitted_at.map(|ts| ts.to_rfc3339())),
+                        period,
+                        status: derived_draft_status,
+                        availability_status: status.as_str().to_string(),
+                        available_from,
+                        due_at,
+                    });
                 }
-                seen_forms.insert(form_key);
-
-                let status =
-                    logs_db::get_availability_status_for_period(&template.schedule, &period, now);
-
-                let derived_draft_status = draft_entry.as_ref().map(|e| {
-                    logs_db::derive_log_status(e.status, &template.schedule, &period, now)
-                        .0
-                        .as_str()
-                        .to_string()
-                });
-
-                due_forms.push(DueFormInfo {
-                    template_name: template.template_name.clone(),
-                    template_layout: processed_layout,
-                    last_submitted: last_submitted
-                        .and_then(|e| e.submitted_at.map(|ts| ts.to_rfc3339())),
-                    period,
-                    status: derived_draft_status,
-                    availability_status: status.as_str().to_string(),
-                    available_from,
-                    due_at,
-                });
             }
         }
     }
@@ -619,19 +650,27 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
     })?;
 
     let mut response_entries = Vec::new();
+
+    // Batch-fetch all templates once instead of N queries in the loop
+    let all_templates = logs_db::get_templates_by_company(&state.mongodb, &company_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get templates: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "Failed to get templates" })),
+            )
+        })?;
+    let template_map: HashMap<&str, &logs_db::TemplateDocument> = all_templates
+        .iter()
+        .map(|t| (t.template_name.as_str(), t))
+        .collect();
+
     for e in entries {
-        let template = logs_db::get_template_by_name(&state.mongodb, &e.template_name, &company_id)
-            .await
-            .map_err(|err| {
-                tracing::error!("Failed to get template: {:?}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to get template" })),
-                )
-            })?;
+        let template = template_map.get(e.template_name.as_str());
 
         let (processed_layout, derived_status, availability_status) =
-            if let Some(template) = template {
+            if let Some(template) = template.copied() {
                 let layout = logs_db::process_template_layout_with_period_string(
                     &template.template_layout,
                     &e.period,
@@ -705,20 +744,27 @@ pub async fn list_user_log_entries(
         entries.retain(|e| e.template_name == *template_name);
     }
 
+    // Batch-fetch all templates once instead of N queries in the loop
+    let all_templates = logs_db::get_templates_by_company(&state.mongodb, &company_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get templates: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "Failed to get templates" })),
+            )
+        })?;
+    let template_map: HashMap<&str, &logs_db::TemplateDocument> = all_templates
+        .iter()
+        .map(|t| (t.template_name.as_str(), t))
+        .collect();
+
     let mut response_entries = Vec::new();
     for e in entries {
-        let template = logs_db::get_template_by_name(&state.mongodb, &e.template_name, &company_id)
-            .await
-            .map_err(|err| {
-                tracing::error!("Failed to get template: {:?}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to get template" })),
-                )
-            })?;
+        let template = template_map.get(e.template_name.as_str());
 
         let (processed_layout, derived_status, availability_status) =
-            if let Some(template) = template {
+            if let Some(template) = template.copied() {
                 let layout = logs_db::process_template_layout_with_period_string(
                     &template.template_layout,
                     &e.period,

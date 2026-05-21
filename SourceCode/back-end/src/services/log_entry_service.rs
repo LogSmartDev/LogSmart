@@ -230,23 +230,13 @@ impl LogEntryService {
             ));
         }
 
-        logs_db::update_log_entry(&state.mongodb, entry_id, entry_data)
+        let updated_entry = logs_db::update_log_entry_with_return(&state.mongodb, entry_id, entry_data)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to update log entry: {:?}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     json!({ "error": "Failed to update log entry" }),
-                )
-            })?;
-
-        let updated_entry = logs_db::get_log_entry(&state.mongodb, entry_id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to fetch updated log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to fetch updated entry" }),
                 )
             })?
             .ok_or((StatusCode::NOT_FOUND, json!({ "error": "Entry not found" })))?;
