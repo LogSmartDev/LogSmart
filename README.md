@@ -9,7 +9,7 @@ Introducing LogSmart, the template-based digital logging system initially design
 - **API:** [https://logsmart.app/api/](https://logsmart.app/api/)
 - **API Docs:** [https://api.logsmart.app/swagger-ui](https://api.logsmart.app/swagger-ui)
 - **Direct API:** [https://api.logsmart.app/](https://api.logsmart.app/)
-- **Repository:** [https://github.com/Plymouth-University/comp2003-2025-2026-group-2](https://github.com/LogSmartDev/LogSmart)
+- **Repository:** [https://github.com/LogSmartDev/LogSmart](https://github.com/LogSmartDev/LogSmart)
 
 ## 🛠️ Tech Stack
 
