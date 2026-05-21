@@ -7,6 +7,152 @@ use mongodb::options::ReturnDocument;
 use schemars::JsonSchema;
 use utoipa::ToSchema;
 
+/// Wrapper around a MongoDB database providing typed collection accessors.
+/// Eliminates repeated `client.database("logs_db").collection("...")` boilerplate.
+#[derive(Clone)]
+pub struct LogDb {
+    db: mongodb::Database,
+}
+
+impl LogDb {
+    #[must_use]
+    pub fn new(client: &mongodb::Client) -> Self {
+        Self {
+            db: client.database("logs_db"),
+        }
+    }
+
+    pub fn templates(&self) -> mongodb::Collection<TemplateDocument> {
+        self.db.collection("templates")
+    }
+
+    pub fn template_versions(&self) -> mongodb::Collection<TemplateVersionDocument> {
+        self.db.collection("template_versions")
+    }
+
+    pub fn log_entries(&self) -> mongodb::Collection<LogEntry> {
+        self.db.collection("log_entries")
+    }
+
+    pub fn report_runs(&self) -> mongodb::Collection<ReportRunDocument> {
+        self.db.collection("report_runs")
+    }
+}
+
+/// Collects all documents from a MongoDB cursor into a Vec.
+/// Eliminates the repeated `while let Some(item) = cursor.try_next().await?` pattern.
+pub async fn collect_cursor<S, T>(mut cursor: S) -> Result<Vec<T>>
+where
+    S: futures_util::TryStream<Ok = T, Error = mongodb::error::Error> + Unpin,
+{
+    let mut results = Vec::new();
+    while let Some(item) = cursor.try_next().await? {
+        results.push(item);
+    }
+    Ok(results)
+}
+
+/// Computes the start and end timestamps for the current period based on frequency.
+/// Extracted from the three functions that duplicated this ~80-line match block.
+fn compute_period_bounds(frequency: &Frequency) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    let now = chrono::Utc::now();
+    match frequency {
+        Frequency::Daily => {
+            let start = now
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap_or_else(|| panic!("Error finding day start: {now}"))
+                .and_utc();
+            let end = now
+                .date_naive()
+                .and_hms_opt(23, 59, 59)
+                .unwrap_or_else(|| panic!("Error finding day end: {now}"))
+                .and_utc();
+            (start, end)
+        }
+        Frequency::Weekly => {
+            let days_since_monday = now.weekday().num_days_from_sunday();
+            let start = (now.date_naive() - chrono::Duration::days(i64::from(days_since_monday)))
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+            let end = (start.date_naive() + chrono::Duration::days(6))
+                .and_hms_opt(23, 59, 59)
+                .unwrap()
+                .and_utc();
+            (start, end)
+        }
+        Frequency::Monthly => {
+            let start = now
+                .date_naive()
+                .with_day(1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+            let next_month = if now.month() == 12 {
+                now.date_naive()
+                    .with_year(now.year() + 1)
+                    .unwrap()
+                    .with_month(1)
+                    .unwrap()
+            } else {
+                now.date_naive().with_month(now.month() + 1).unwrap()
+            };
+            let end = (next_month - chrono::Duration::days(1))
+                .and_hms_opt(23, 59, 59)
+                .unwrap()
+                .and_utc();
+            (start, end)
+        }
+        Frequency::Quarterly => {
+            let quarter_start_month = ((now.date_naive().month() - 1) / 3) * 3 + 1;
+            let start = now
+                .date_naive()
+                .with_month(quarter_start_month)
+                .unwrap()
+                .with_day(1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+            let quarter_end_month = quarter_start_month + 2;
+            let last_day = get_month_last_day(now.date_naive().year(), quarter_end_month);
+            let end = now
+                .date_naive()
+                .with_month(quarter_end_month)
+                .unwrap()
+                .with_day(last_day)
+                .unwrap()
+                .and_hms_opt(23, 59, 59)
+                .unwrap()
+                .and_utc();
+            (start, end)
+        }
+        Frequency::Yearly => {
+            let start = now
+                .date_naive()
+                .with_month(1)
+                .unwrap()
+                .with_day(1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+            let end = now
+                .date_naive()
+                .with_month(12)
+                .unwrap()
+                .with_day(31)
+                .unwrap()
+                .and_hms_opt(23, 59, 59)
+                .unwrap()
+                .and_utc();
+            (start, end)
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, ToSchema, JsonSchema)]
 pub struct Position {
     pub x: f64,
@@ -164,8 +310,8 @@ pub async fn init_mongodb() -> Result<mongodb::Client> {
 }
 
 async fn ensure_report_run_indexes(client: &mongodb::Client) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<ReportRunDocument> = db.collection("report_runs");
+    let db = LogDb::new(client);
+    let collection = db.report_runs();
 
     let index = mongodb::IndexModel::builder()
         .keys(mongodb::bson::doc! {
@@ -232,10 +378,8 @@ async fn backfill_missing_report_params_keys(
 /// # Errors
 /// Returns an error if the database operation fails.
 pub async fn add_template(client: &mongodb::Client, template: &TemplateDocument) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateDocument> = db.collection("templates");
-
-    collection.insert_one(template).await?;
+    let db = LogDb::new(client);
+    db.templates().insert_one(template).await?;
     Ok(())
 }
 
@@ -247,11 +391,8 @@ pub async fn add_template_version(
     client: &mongodb::Client,
     version_doc: &TemplateVersionDocument,
 ) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateVersionDocument> =
-        db.collection("template_versions");
-
-    collection.insert_one(version_doc).await?;
+    let db = LogDb::new(client);
+    db.template_versions().insert_one(version_doc).await?;
     Ok(())
 }
 
@@ -264,9 +405,8 @@ pub async fn get_template_versions(
     company_id: &str,
     template_name: &str,
 ) -> Result<Vec<TemplateVersionDocument>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateVersionDocument> =
-        db.collection("template_versions");
+    let db = LogDb::new(client);
+    let collection = db.template_versions();
 
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
@@ -277,14 +417,8 @@ pub async fn get_template_versions(
         .sort(mongodb::bson::doc! { "version": -1 })
         .build();
 
-    let mut cursor = collection.find(filter).with_options(find_options).await?;
-    let mut versions = Vec::new();
-
-    while let Some(version) = cursor.try_next().await? {
-        versions.push(version);
-    }
-
-    Ok(versions)
+    let cursor = collection.find(filter).with_options(find_options).await?;
+    collect_cursor(cursor).await
 }
 
 /// Retrieves a specific template version.
@@ -297,18 +431,14 @@ pub async fn get_template_version(
     template_name: &str,
     version: u16,
 ) -> Result<Option<TemplateVersionDocument>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateVersionDocument> =
-        db.collection("template_versions");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
         "template_name": template_name,
         "version": u32::from(version),
     };
 
-    let result = collection.find_one(filter).await?;
-    Ok(result)
+    db.template_versions().find_one(filter).await.map_err(Into::into)
 }
 
 /// Retrieves a log template by its name and company ID.
@@ -320,16 +450,13 @@ pub async fn get_template_by_name(
     template_name: &str,
     company_id: &str,
 ) -> Result<Option<TemplateDocument>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateDocument> = db.collection("templates");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "template_name": template_name,
         "company_id": company_id,
     };
 
-    let result = collection.find_one(filter).await?;
-    Ok(result)
+    db.templates().find_one(filter).await.map_err(Into::into)
 }
 
 pub async fn get_templates_by_company(
@@ -348,8 +475,8 @@ pub async fn get_templates_by_company_and_branch(
     company_id: &str,
     branch_id: Option<&str>,
 ) -> Result<Vec<TemplateDocument>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateDocument> = db.collection("templates");
+    let db = LogDb::new(client);
+    let collection = db.templates();
 
     let filter = if let Some(bid) = branch_id {
         mongodb::bson::doc! {
@@ -365,14 +492,8 @@ pub async fn get_templates_by_company_and_branch(
         }
     };
 
-    let mut cursor = collection.find(filter).await?;
-    let mut templates = Vec::new();
-
-    while let Some(template) = cursor.try_next().await? {
-        templates.push(template);
-    }
-
-    Ok(templates)
+    let cursor = collection.find(filter).await?;
+    collect_cursor(cursor).await
 }
 
 /// Retrieves all log entries for a branch.
@@ -384,74 +505,42 @@ pub async fn get_branch_log_entries(
     company_id: &str,
     branch_id: &str,
 ) -> Result<Vec<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
         "branch_id": branch_id,
     };
 
-    let mut cursor = collection.find(filter).await?;
-    let mut entries = Vec::new();
-
-    while let Some(entry) = cursor.try_next().await? {
-        entries.push(entry);
-    }
-
-    Ok(entries)
+    let cursor = db.log_entries().find(filter).await?;
+    collect_cursor(cursor).await
 }
 
-/// Retrieves all log entries for a company.
-///
-/// # Errors
-/// Returns an error if the database query fails.
 pub async fn get_company_log_entries(
     client: &mongodb::Client,
     company_id: &str,
 ) -> Result<Vec<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
     };
 
-    let mut cursor = collection.find(filter).await?;
-    let mut entries = Vec::new();
-
-    while let Some(entry) = cursor.try_next().await? {
-        entries.push(entry);
-    }
-
-    Ok(entries)
+    let cursor = db.log_entries().find(filter).await?;
+    collect_cursor(cursor).await
 }
 
-/// Retrieves log entries for specific branches in a company.
-///
-/// # Errors
-/// Returns an error if the database query fails.
 pub async fn get_branches_log_entries(
     client: &mongodb::Client,
     company_id: &str,
     branch_ids: &[String],
 ) -> Result<Vec<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
         "branch_id": mongodb::bson::doc! { "$in": branch_ids }
     };
 
-    let mut cursor = collection.find(filter).await?;
-    let mut entries = Vec::new();
-
-    while let Some(entry) = cursor.try_next().await? {
-        entries.push(entry);
-    }
-
-    Ok(entries)
+    let cursor = db.log_entries().find(filter).await?;
+    collect_cursor(cursor).await
 }
 
 /// Updates an existing log template.
@@ -470,8 +559,8 @@ pub async fn update_template(
     if schedule.is_none() && layout.is_none() && version_name.is_none() && branch_id.is_none() {
         return Ok(());
     }
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateDocument> = db.collection("templates");
+    let db = LogDb::new(client);
+    let collection = db.templates();
 
     let filter = mongodb::bson::doc! {
         "template_name": template_name,
@@ -498,7 +587,6 @@ pub async fn update_template(
     }
     set_doc.insert("updated_at", mongodb::bson::to_bson(&chrono::Utc::now())?);
 
-    // Increment version
     let update = mongodb::bson::doc! {
         "$set": set_doc,
         "$inc": { "version": 1 }
@@ -543,8 +631,8 @@ pub async fn rename_template(
     new_name: &str,
     company_id: &str,
 ) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateDocument> = db.collection("templates");
+    let db = LogDb::new(client);
+    let collection = db.templates();
 
     let existing_template = collection
         .find_one(mongodb::bson::doc! {
@@ -583,15 +671,13 @@ pub async fn delete_template(
     template_name: &str,
     company_id: &str,
 ) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<TemplateDocument> = db.collection("templates");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "template_name": template_name,
         "company_id": company_id,
     };
 
-    collection.delete_one(filter).await?;
+    db.templates().delete_one(filter).await?;
     Ok(())
 }
 
@@ -649,8 +735,8 @@ pub async fn create_report_run(
     client: &mongodb::Client,
     report_run: &ReportRunDocument,
 ) -> Result<ReportRunDocument> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<ReportRunDocument> = db.collection("report_runs");
+    let db = LogDb::new(client);
+    let collection = db.report_runs();
 
     let normalized_params = normalize_report_params(&report_run.params);
     let params_key = report_params_key(&normalized_params)?;
@@ -718,26 +804,21 @@ pub async fn list_report_runs(
     company_id: &str,
     limit: i64,
 ) -> Result<Vec<ReportRunDocument>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<ReportRunDocument> = db.collection("report_runs");
+    let db = LogDb::new(client);
+    let collection = db.report_runs();
 
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
         "company_id": company_id,
     };
 
-    let mut cursor = collection
+    let cursor = collection
         .find(filter)
         .sort(mongodb::bson::doc! { "last_used_at": -1, "created_at": -1 })
         .limit(limit)
         .await?;
 
-    let mut runs = Vec::new();
-    while let Some(run) = cursor.try_next().await? {
-        runs.push(run);
-    }
-
-    Ok(runs)
+    collect_cursor(cursor).await
 }
 
 /// Marks a saved report run as used.
@@ -750,9 +831,7 @@ pub async fn touch_report_run(
     user_id: &str,
     company_id: &str,
 ) -> Result<bool> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<ReportRunDocument> = db.collection("report_runs");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "report_id": report_id,
         "user_id": user_id,
@@ -768,7 +847,7 @@ pub async fn touch_report_run(
         }
     };
 
-    let result = collection.update_one(filter, update).await?;
+    let result = db.report_runs().update_one(filter, update).await?;
     Ok(result.matched_count > 0)
 }
 
@@ -782,8 +861,8 @@ pub async fn delete_report_run(
     user_id: &str,
     company_id: &str,
 ) -> Result<bool> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<ReportRunDocument> = db.collection("report_runs");
+    let db = LogDb::new(client);
+    let collection = db.report_runs();
 
     let id_filter = mongodb::bson::doc! {
         "report_id": report_id,
@@ -841,83 +920,50 @@ pub async fn delete_report_run(
 /// # Errors
 /// Returns an error if the database operation fails.
 pub async fn create_log_entry(client: &mongodb::Client, entry: &LogEntry) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
-    collection.insert_one(entry).await?;
+    let db = LogDb::new(client);
+    db.log_entries().insert_one(entry).await?;
     Ok(())
 }
 
-/// Retrieves a log entry by its ID.
-///
-/// # Errors
-/// Returns an error if the database query fails.
 pub async fn get_log_entry(client: &mongodb::Client, entry_id: &str) -> Result<Option<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "entry_id": entry_id,
     };
 
-    let result = collection.find_one(filter).await?;
-    Ok(result)
+    db.log_entries().find_one(filter).await.map_err(Into::into)
 }
 
-/// Retrieves all log entries for a user in a company.
-///
-/// # Errors
-/// Returns an error if the database query fails.
 pub async fn get_user_log_entries(
     client: &mongodb::Client,
     user_id: &str,
     company_id: &str,
 ) -> Result<Vec<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
         "company_id": company_id,
     };
 
-    let mut cursor = collection.find(filter).await?;
-    let mut entries = Vec::new();
-
-    while let Some(entry) = cursor.try_next().await? {
-        entries.push(entry);
-    }
-
-    Ok(entries)
+    let cursor = db.log_entries().find(filter).await?;
+    collect_cursor(cursor).await
 }
 
-/// Retrieves log entries for a user, filtered by template.
-///
-/// # Errors
-/// Returns an error if the database query fails.
 pub async fn get_user_log_entries_by_template(
     client: &mongodb::Client,
     user_id: &str,
     company_id: &str,
     template_name: &str,
 ) -> Result<Vec<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
         "company_id": company_id,
         "template_name": template_name,
     };
 
-    let mut cursor = collection.find(filter).await?;
-    let mut entries = Vec::new();
-
-    while let Some(entry) = cursor.try_next().await? {
-        entries.push(entry);
-    }
-
-    Ok(entries)
+    let cursor = db.log_entries().find(filter).await?;
+    collect_cursor(cursor).await
 }
 
 /// Retrieves the most recently submitted log entry for a user and template.
@@ -930,9 +976,7 @@ pub async fn get_latest_submitted_entry(
     company_id: &str,
     template_name: &str,
 ) -> Result<Option<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
         "company_id": company_id,
@@ -940,11 +984,11 @@ pub async fn get_latest_submitted_entry(
         "status": mongodb::bson::to_bson(&LogStatus::Submitted)?,
     };
 
-    let result = collection
+    db.log_entries()
         .find_one(filter)
         .sort(mongodb::bson::doc! { "submitted_at": -1 })
-        .await?;
-    Ok(result)
+        .await
+        .map_err(Into::into)
 }
 
 /// Batch version of get_latest_submitted_entry - gets latest submitted entry for multiple templates.
@@ -961,9 +1005,7 @@ pub async fn get_latest_submitted_entries_batch(
         return Ok(std::collections::HashMap::new());
     }
 
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
         "company_id": company_id,
@@ -971,13 +1013,14 @@ pub async fn get_latest_submitted_entries_batch(
         "status": mongodb::bson::to_bson(&LogStatus::Submitted)?,
     };
 
-    let mut cursor = collection
+    let cursor = db.log_entries()
         .find(filter)
         .sort(mongodb::bson::doc! { "submitted_at": -1 })
         .await?;
-    let mut results: std::collections::HashMap<String, LogEntry> = std::collections::HashMap::new();
+    let entries = collect_cursor(cursor).await?;
 
-    while let Some(entry) = cursor.try_next().await? {
+    let mut results = std::collections::HashMap::new();
+    for entry in entries {
         results.entry(entry.template_name.clone()).or_insert(entry);
     }
 
@@ -998,16 +1041,14 @@ pub async fn get_periods_with_entries_batch(
         return Ok(std::collections::HashMap::new());
     }
 
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
         "template_name": { "$in": template_names },
         "period": { "$in": all_periods }
     };
 
-    let cursor = collection.find(filter).await?;
+    let cursor = db.log_entries().find(filter).await?;
     let entries: Vec<LogEntry> = cursor.try_collect().await?;
 
     let mut results: std::collections::HashMap<String, std::collections::HashSet<String>> =
@@ -1041,9 +1082,7 @@ pub async fn has_submitted_entries_batch(
         return Ok(std::collections::HashMap::new());
     }
 
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let template_names: Vec<&str> = templates.iter().map(|(n, _)| *n).collect();
     let now = chrono::Utc::now();
     let period_start = now - chrono::Duration::days(400);
@@ -1059,10 +1098,10 @@ pub async fn has_submitted_entries_batch(
         "status": mongodb::bson::to_bson(&LogStatus::Submitted)?,
     };
 
-    let cursor = collection.find(filter).await?;
+    let cursor = db.log_entries().find(filter).await?;
     let entries: Vec<LogEntry> = cursor.try_collect().await?;
 
-    let mut results: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    let mut results = std::collections::HashMap::new();
     for (name, _) in templates {
         let has_submitted = entries.iter().any(|e| {
             e.template_name == *name && is_in_current_period(&e.submitted_at, &e.period, now)
@@ -1099,9 +1138,7 @@ pub async fn get_draft_entries_batch(
         return Ok(std::collections::HashMap::new());
     }
 
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
         "company_id": company_id,
@@ -1109,11 +1146,10 @@ pub async fn get_draft_entries_batch(
         "status": mongodb::bson::to_bson(&LogStatus::Draft)?,
     };
 
-    let cursor = collection.find(filter).await?;
+    let cursor = db.log_entries().find(filter).await?;
     let entries: Vec<LogEntry> = cursor.try_collect().await?;
 
-    let mut results: std::collections::HashMap<String, Option<LogEntry>> =
-        std::collections::HashMap::new();
+    let mut results = std::collections::HashMap::new();
     for name in template_names {
         results.insert(name.clone(), None);
     }
@@ -1138,105 +1174,8 @@ pub async fn has_entry_for_current_period(
     template_name: &str,
     frequency: &Frequency,
 ) -> Result<bool> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
-    let now = chrono::Utc::now();
-    let (period_start, period_end) = match frequency {
-        Frequency::Daily => {
-            let start = now
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap_or_else(|| panic!("Error finding day start: {now}"))
-                .and_utc();
-            let end = now
-                .date_naive()
-                .and_hms_opt(23, 59, 59)
-                .unwrap_or_else(|| panic!("Error finding day end: {now}"))
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Weekly => {
-            let days_since_monday = now.weekday().num_days_from_sunday();
-            let start = (now.date_naive() - chrono::Duration::days(i64::from(days_since_monday)))
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let end = (now.date_naive() + chrono::Duration::days(6 - i64::from(days_since_monday)))
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Monthly => {
-            let start = now
-                .date_naive()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let next_month = if now.month() == 12 {
-                now.date_naive()
-                    .with_year(now.year() + 1)
-                    .unwrap()
-                    .with_month(1)
-                    .unwrap()
-            } else {
-                now.date_naive().with_month(now.month() + 1).unwrap()
-            };
-            let end = (next_month - chrono::Duration::days(1))
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Quarterly => {
-            let quarter_start_month = ((now.date_naive().month() - 1) / 3) * 3 + 1;
-            let start = now
-                .date_naive()
-                .with_month(quarter_start_month)
-                .unwrap()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let quarter_end_month = quarter_start_month + 2;
-            let last_day = get_month_last_day(now.date_naive().year(), quarter_end_month);
-            let end = now
-                .date_naive()
-                .with_month(quarter_end_month)
-                .unwrap()
-                .with_day(last_day)
-                .unwrap()
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Yearly => {
-            let start = now
-                .date_naive()
-                .with_month(1)
-                .unwrap()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let end = now
-                .date_naive()
-                .with_month(12)
-                .unwrap()
-                .with_day(31)
-                .unwrap()
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-    };
+    let db = LogDb::new(client);
+    let (period_start, period_end) = compute_period_bounds(frequency);
 
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
@@ -1247,7 +1186,7 @@ pub async fn has_entry_for_current_period(
         },
     };
 
-    let result = collection.find_one(filter).await?;
+    let result = db.log_entries().find_one(filter).await?;
     Ok(result.is_some())
 }
 
@@ -1265,105 +1204,8 @@ pub async fn has_submitted_entry_for_current_period(
     template_name: &str,
     frequency: &Frequency,
 ) -> Result<bool> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
-    let now = chrono::Utc::now();
-    let (period_start, period_end) = match frequency {
-        Frequency::Daily => {
-            let start = now
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap_or_else(|| panic!("Error finding day start: {now}"))
-                .and_utc();
-            let end = now
-                .date_naive()
-                .and_hms_opt(23, 59, 59)
-                .unwrap_or_else(|| panic!("Error finding day end: {now}"))
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Weekly => {
-            let days_since_monday = now.weekday().num_days_from_sunday();
-            let start = (now.date_naive() - chrono::Duration::days(i64::from(days_since_monday)))
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let end = (start.date_naive() + chrono::Duration::days(6))
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Monthly => {
-            let start = now
-                .date_naive()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let next_month = if now.month() == 12 {
-                now.date_naive()
-                    .with_year(now.year() + 1)
-                    .unwrap()
-                    .with_month(1)
-                    .unwrap()
-            } else {
-                now.date_naive().with_month(now.month() + 1).unwrap()
-            };
-            let end = (next_month - chrono::Duration::days(1))
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Quarterly => {
-            let quarter_start_month = ((now.date_naive().month() - 1) / 3) * 3 + 1;
-            let start = now
-                .date_naive()
-                .with_month(quarter_start_month)
-                .unwrap()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let quarter_end_month = quarter_start_month + 2;
-            let last_day = get_month_last_day(now.date_naive().year(), quarter_end_month);
-            let end = now
-                .date_naive()
-                .with_month(quarter_end_month)
-                .unwrap()
-                .with_day(last_day)
-                .unwrap()
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Yearly => {
-            let start = now
-                .date_naive()
-                .with_month(1)
-                .unwrap()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let end = now
-                .date_naive()
-                .with_month(12)
-                .unwrap()
-                .with_day(31)
-                .unwrap()
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-    };
+    let db = LogDb::new(client);
+    let (period_start, period_end) = compute_period_bounds(frequency);
 
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
@@ -1376,7 +1218,7 @@ pub async fn has_submitted_entry_for_current_period(
         },
     };
 
-    let result = collection.find_one(filter).await?;
+    let result = db.log_entries().find_one(filter).await?;
     Ok(result.is_some())
 }
 
@@ -1390,23 +1232,17 @@ pub async fn has_entry_for_period(
     template_name: &str,
     period: &str,
 ) -> Result<bool> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
         "template_name": template_name,
         "period": period,
     };
 
-    let result = collection.find_one(filter).await?;
+    let result = db.log_entries().find_one(filter).await?;
     Ok(result.is_some())
 }
 
-/// Returns periods that have entries, for batch checking.
-///
-/// # Errors
-/// Returns an error if the database query fails.
 pub async fn get_periods_with_entries(
     client: &mongodb::Client,
     company_id: &str,
@@ -1417,16 +1253,14 @@ pub async fn get_periods_with_entries(
         return Ok(std::collections::HashSet::new());
     }
 
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "company_id": company_id,
         "template_name": template_name,
         "period": { "$in": periods }
     };
 
-    let cursor = collection.find(filter).await?;
+    let cursor = db.log_entries().find(filter).await?;
     let entries: Vec<LogEntry> = cursor.try_collect().await?;
     Ok(entries.into_iter().map(|e| e.period).collect())
 }
@@ -1445,105 +1279,8 @@ pub async fn get_draft_entry_for_current_period(
     template_name: &str,
     frequency: &Frequency,
 ) -> Result<Option<LogEntry>> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
-    let now = chrono::Utc::now();
-    let (period_start, period_end) = match frequency {
-        Frequency::Daily => {
-            let start = now
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap_or_else(|| panic!("Error finding day start: {now}"))
-                .and_utc();
-            let end = now
-                .date_naive()
-                .and_hms_opt(23, 59, 59)
-                .unwrap_or_else(|| panic!("Error finding day end: {now}"))
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Weekly => {
-            let days_since_monday = now.weekday().num_days_from_sunday();
-            let start = (now.date_naive() - chrono::Duration::days(i64::from(days_since_monday)))
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let end = (start.date_naive() + chrono::Duration::days(6))
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Monthly => {
-            let start = now
-                .date_naive()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let next_month = if now.month() == 12 {
-                now.date_naive()
-                    .with_year(now.year() + 1)
-                    .unwrap()
-                    .with_month(1)
-                    .unwrap()
-            } else {
-                now.date_naive().with_month(now.month() + 1).unwrap()
-            };
-            let end = (next_month - chrono::Duration::days(1))
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Yearly => {
-            let start = now
-                .date_naive()
-                .with_month(1)
-                .unwrap()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let end = now
-                .date_naive()
-                .with_month(12)
-                .unwrap()
-                .with_day(31)
-                .unwrap()
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-        Frequency::Quarterly => {
-            let quarter_start_month = ((now.date_naive().month() - 1) / 3) * 3 + 1;
-            let start = now
-                .date_naive()
-                .with_month(quarter_start_month)
-                .unwrap()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-            let quarter_end_month = quarter_start_month + 2;
-            let last_day = get_month_last_day(now.date_naive().year(), quarter_end_month);
-            let end = now
-                .date_naive()
-                .with_month(quarter_end_month)
-                .unwrap()
-                .with_day(last_day)
-                .unwrap()
-                .and_hms_opt(23, 59, 59)
-                .unwrap()
-                .and_utc();
-            (start, end)
-        }
-    };
+    let db = LogDb::new(client);
+    let (period_start, period_end) = compute_period_bounds(frequency);
 
     let filter = mongodb::bson::doc! {
         "user_id": user_id,
@@ -1556,8 +1293,7 @@ pub async fn get_draft_entry_for_current_period(
         },
     };
 
-    let result = collection.find_one(filter).await?;
-    Ok(result)
+    db.log_entries().find_one(filter).await.map_err(Into::into)
 }
 
 /// Updates the data of an existing log entry.
@@ -1569,9 +1305,7 @@ pub async fn update_log_entry(
     entry_id: &str,
     entry_data: &serde_json::Value,
 ) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "entry_id": entry_id,
     };
@@ -1583,18 +1317,12 @@ pub async fn update_log_entry(
         }
     };
 
-    collection.update_one(filter, update).await?;
+    db.log_entries().update_one(filter, update).await?;
     Ok(())
 }
 
-/// Submits a log entry, marking it as final.
-///
-/// # Errors
-/// Returns an error if the database update fails.
 pub async fn submit_log_entry(client: &mongodb::Client, entry_id: &str) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "entry_id": entry_id,
     };
@@ -1607,18 +1335,12 @@ pub async fn submit_log_entry(client: &mongodb::Client, entry_id: &str) -> Resul
         }
     };
 
-    collection.update_one(filter, update).await?;
+    db.log_entries().update_one(filter, update).await?;
     Ok(())
 }
 
-/// Returns a submitted log entry to draft status.
-///
-/// # Errors
-/// Returns an error if the database update fails.
 pub async fn unsubmit_log_entry(client: &mongodb::Client, entry_id: &str) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "entry_id": entry_id,
     };
@@ -1631,23 +1353,17 @@ pub async fn unsubmit_log_entry(client: &mongodb::Client, entry_id: &str) -> Res
         }
     };
 
-    collection.update_one(filter, update).await?;
+    db.log_entries().update_one(filter, update).await?;
     Ok(())
 }
 
-/// Deletes a log entry.
-///
-/// # Errors
-/// Returns an error if the database deletion fails.
 pub async fn delete_log_entry(client: &mongodb::Client, entry_id: &str) -> Result<()> {
-    let db = client.database("logs_db");
-    let collection: mongodb::Collection<LogEntry> = db.collection("log_entries");
-
+    let db = LogDb::new(client);
     let filter = mongodb::bson::doc! {
         "entry_id": entry_id,
     };
 
-    collection.delete_one(filter).await?;
+    db.log_entries().delete_one(filter).await?;
     Ok(())
 }
 
