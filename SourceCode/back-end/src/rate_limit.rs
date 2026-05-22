@@ -14,11 +14,41 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub const LOGIN_IP_LIMIT: u32 = 5;
-pub const REGISTER_IP_LIMIT: u32 = 10;
-pub const GENERAL_IP_LIMIT: u32 = 60;
-pub const LOGIN_EMAIL_LIMIT: u32 = 10;
-pub const REGISTER_EMAIL_LIMIT: u32 = 20;
+/// Rate limit constants with environment variable overrides
+pub fn get_login_ip_limit() -> u32 {
+    std::env::var("RATE_LIMIT_LOGIN_IP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5)
+}
+
+pub fn get_register_ip_limit() -> u32 {
+    std::env::var("RATE_LIMIT_REGISTER_IP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+}
+
+pub fn get_general_ip_limit() -> u32 {
+    std::env::var("RATE_LIMIT_GENERAL_IP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60)
+}
+
+pub fn get_login_email_limit() -> u32 {
+    std::env::var("RATE_LIMIT_LOGIN_EMAIL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+}
+
+pub fn get_register_email_limit() -> u32 {
+    std::env::var("RATE_LIMIT_REGISTER_EMAIL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20)
+}
 
 type IpLimiter = DashMap<
     IpAddr,
@@ -159,13 +189,13 @@ impl RateLimitState {
     /// Checks if a login attempt from a given IP is allowed by rate limits.
     ///
     /// # Panics
-    /// Panics if the hardcoded quota is invalid.
+    /// Panics if the configured quota is invalid.
     #[must_use]
     pub fn check_login(&self, ip: IpAddr) -> bool {
         if self.disabled {
             return true;
         }
-        let quota = Quota::per_minute(NonZeroU32::new(LOGIN_IP_LIMIT).unwrap());
+        let quota = Quota::per_minute(NonZeroU32::new(get_login_ip_limit()).unwrap());
         let limiter = Self::get_or_create_ip_limiter(&self.ip_login_limiter, ip, quota);
         limiter.check().is_ok()
     }
@@ -173,13 +203,13 @@ impl RateLimitState {
     /// Checks if a login attempt for a given email is allowed by rate limits.
     ///
     /// # Panics
-    /// Panics if the hardcoded quota is invalid.
+    /// Panics if the configured quota is invalid.
     #[must_use]
     pub fn check_login_email(&self, email: &str) -> bool {
         if self.disabled {
             return true;
         }
-        let quota = Quota::per_minute(NonZeroU32::new(LOGIN_EMAIL_LIMIT).unwrap());
+        let quota = Quota::per_minute(NonZeroU32::new(get_login_email_limit()).unwrap());
         let limiter = Self::get_or_create_string_limiter(
             &self.email_login_limiter,
             email.to_lowercase(),
@@ -191,13 +221,13 @@ impl RateLimitState {
     /// Checks if a registration attempt from a given IP is allowed by rate limits.
     ///
     /// # Panics
-    /// Panics if the hardcoded quota is invalid.
+    /// Panics if the configured quota is invalid.
     #[must_use]
     pub fn check_register(&self, ip: IpAddr) -> bool {
         if self.disabled {
             return true;
         }
-        let quota = Quota::per_minute(NonZeroU32::new(REGISTER_IP_LIMIT).unwrap());
+        let quota = Quota::per_minute(NonZeroU32::new(get_register_ip_limit()).unwrap());
         let limiter = Self::get_or_create_ip_limiter(&self.ip_register_limiter, ip, quota);
         limiter.check().is_ok()
     }
@@ -205,13 +235,13 @@ impl RateLimitState {
     /// Checks if a registration attempt for a given email is allowed by rate limits.
     ///
     /// # Panics
-    /// Panics if the hardcoded quota is invalid.
+    /// Panics if the configured quota is invalid.
     #[must_use]
     pub fn check_register_email(&self, email: &str) -> bool {
         if self.disabled {
             return true;
         }
-        let quota = Quota::per_minute(NonZeroU32::new(REGISTER_EMAIL_LIMIT).unwrap());
+        let quota = Quota::per_minute(NonZeroU32::new(get_register_email_limit()).unwrap());
         let limiter = Self::get_or_create_string_limiter(
             &self.email_register_limiter,
             email.to_lowercase(),
@@ -223,13 +253,13 @@ impl RateLimitState {
     /// Checks if a general request from a given IP is allowed by rate limits.
     ///
     /// # Panics
-    /// Panics if the hardcoded quota is invalid.
+    /// Panics if the configured quota is invalid.
     #[must_use]
     pub fn check_general(&self, ip: IpAddr) -> bool {
         if self.disabled {
             return true;
         }
-        let quota = Quota::per_minute(NonZeroU32::new(GENERAL_IP_LIMIT).unwrap());
+        let quota = Quota::per_minute(NonZeroU32::new(get_general_ip_limit()).unwrap());
         let limiter = Self::get_or_create_ip_limiter(&self.ip_general_limiter, ip, quota);
         limiter.check().is_ok()
     }
@@ -237,7 +267,7 @@ impl RateLimitState {
     /// Checks if an OAuth request from a given IP is allowed by rate limits.
     ///
     /// # Panics
-    /// Panics if the hardcoded quota is invalid.
+    /// Panics if the configured quota is invalid.
     #[must_use]
     pub fn check_oauth(&self, ip: IpAddr) -> bool {
         if self.disabled {

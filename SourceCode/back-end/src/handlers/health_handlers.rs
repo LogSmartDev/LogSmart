@@ -1,6 +1,7 @@
 use crate::middleware::LogSmartAdminUser;
 use crate::rate_limit::{
-    GENERAL_IP_LIMIT, LOGIN_EMAIL_LIMIT, LOGIN_IP_LIMIT, REGISTER_EMAIL_LIMIT, REGISTER_IP_LIMIT,
+    get_general_ip_limit, get_login_email_limit, get_login_ip_limit, get_register_email_limit,
+    get_register_ip_limit,
 };
 use crate::{AppState, db, utils};
 use axum::extract::State;
@@ -194,11 +195,11 @@ pub async fn get_rate_limit_status(
     let rate_limit = &state.rate_limit;
     Json(RateLimitStatusResponse {
         enabled: !rate_limit.disabled,
-        login_ip_limit: LOGIN_IP_LIMIT,
-        register_ip_limit: REGISTER_IP_LIMIT,
-        general_ip_limit: GENERAL_IP_LIMIT,
-        login_email_limit: LOGIN_EMAIL_LIMIT,
-        register_email_limit: REGISTER_EMAIL_LIMIT,
+        login_ip_limit: get_login_ip_limit(),
+        register_ip_limit: get_register_ip_limit(),
+        general_ip_limit: get_general_ip_limit(),
+        login_email_limit: get_login_email_limit(),
+        register_email_limit: get_register_email_limit(),
         export_limit: 1,
     })
     .into_response()

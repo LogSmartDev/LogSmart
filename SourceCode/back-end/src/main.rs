@@ -8,6 +8,8 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use url::Url;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+use tower_http::trace::TraceLayer;
+use tower_http::compression::CompressionLayer;
 
 const VARS: [&str; 12] = [
     "JWT_SECRET",
@@ -359,28 +361,45 @@ async fn main() {
         .url("/api-docs/openapi.json", ApiDoc::openapi())
         .into();
 
-    let allowed_origins = [
-        "http://localhost:5173".parse().unwrap(),
-        "http://logsmart.app".parse().unwrap(),
-        "https://logsmart.app".parse().unwrap(),
-    ];
+    // Parse allowed origins from environment variable or use defaults
+    let allowed_origins_str = std::env::var("ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:5173,http://logsmart.app,https://logsmart.app".to_string());
+    
+    let allowed_origins: Vec<_> = allowed_origins_str
+        .split(',')
+        .filter_map(|origin| {
+            let trimmed = origin.trim();
+            if !trimmed.is_empty() {
+                trimmed.parse().ok()
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    let app = swagger_router.merge(api_routes).layer(
-        tower_http::cors::CorsLayer::new()
-            .allow_origin(allowed_origins)
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::PUT,
-                axum::http::Method::DELETE,
-                axum::http::Method::OPTIONS,
-            ])
-            .allow_headers([
-                axum::http::header::CONTENT_TYPE,
-                axum::http::header::AUTHORIZATION,
-            ])
-            .allow_credentials(true),
-    );
+    if allowed_origins.is_empty() {
+        tracing::warn!("No valid CORS origins configured, using defaults");
+    }
+
+    let app = swagger_router.merge(api_routes)
+        .layer(TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(allowed_origins)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers([
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::header::AUTHORIZATION,
+                ])
+                .allow_credentials(true),
+        );
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:6767")
         .await
