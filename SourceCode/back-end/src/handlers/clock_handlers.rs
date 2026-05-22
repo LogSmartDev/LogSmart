@@ -153,7 +153,7 @@ pub async fn get_company_clock_events(
     State(state): State<AppState>,
     Query(params): Query<CompanyClockQuery>,
 ) -> Result<Json<CompanyClockEventsResponse>, crate::error::AppError> {
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let from = params
         .from

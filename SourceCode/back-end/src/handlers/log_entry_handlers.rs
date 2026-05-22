@@ -46,7 +46,7 @@ pub async fn list_due_forms_today(
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(20);
 
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let templates =
         services::LogEntryService::list_due_forms(&state, &company_id, user.branch_id.as_deref())
@@ -358,7 +358,7 @@ pub async fn get_log_entry(
         .await
         ?;
 
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let template = logs_db::get_template_by_name(&state.mongodb, &entry.template_name, &company_id)
         .await
@@ -426,7 +426,7 @@ pub async fn update_log_entry(
     .await
     ?;
 
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let template =
         logs_db::get_template_by_name(&state.mongodb, &updated_entry.template_name, &company_id)
@@ -682,7 +682,7 @@ pub async fn list_user_log_entries(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ListLogEntriesResponse>, crate::error::AppError> {
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let mut entries =
         services::LogEntryService::get_user_log_entries(&state, &user.id, &company_id)
@@ -775,7 +775,7 @@ pub async fn create_report_run(
     State(state): State<AppState>,
     Json(mut payload): Json<CreateReportRunRequest>,
 ) -> Result<(StatusCode, Json<CreateReportRunResponse>), crate::error::AppError> {
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     if payload.params.date_from_iso.is_empty() || payload.params.date_to_iso.is_empty() {
         return Err(crate::error::AppError::BadRequest("date_from_iso and date_to_iso are required".to_string()));
@@ -838,7 +838,7 @@ pub async fn list_report_runs(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ListReportRunsResponse>, crate::error::AppError> {
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let limit = params
         .get("limit")
@@ -905,7 +905,7 @@ pub async fn use_report_run(
     State(state): State<AppState>,
     Path(report_id): Path<String>,
 ) -> Result<Json<UseReportRunResponse>, crate::error::AppError> {
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let touched = logs_db::touch_report_run(&state.mongodb, &report_id, &user.id, &company_id)
         .await
@@ -943,7 +943,7 @@ pub async fn delete_report_run(
     State(state): State<AppState>,
     Path(report_id): Path<String>,
 ) -> Result<Json<DeleteReportRunResponse>, crate::error::AppError> {
-    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     tracing::info!(
         target: "report_runs",

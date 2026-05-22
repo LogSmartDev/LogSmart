@@ -119,6 +119,15 @@ impl UserRecord {
     pub fn can_read_manage_branch(&self) -> bool {
         self.is_readonly_hq() || self.can_manage_branch()
     }
+
+    /// Returns the company_id as an owned String if present, or a Forbidden error if not.
+    pub fn company_id_or_forbidden(&self) -> Result<String, crate::error::AppError> {
+        self.company_id
+            .clone()
+            .ok_or_else(|| crate::error::AppError::Forbidden(
+                "User is not associated with a company".to_string(),
+            ))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, PartialEq)]
