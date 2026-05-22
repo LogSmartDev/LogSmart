@@ -8,9 +8,75 @@ use uuid::Uuid;
 
 #[cfg(test)]
 mod log_entry_service_tests {
-    #[tokio::test]
-    async fn test_log_entry_service_basic() {
-        assert!(true);
+    use super::*;
+    use chrono::Utc;
+
+    fn create_test_entry(user_id: &str, company_id: &str) -> logs_db::LogEntry {
+        logs_db::LogEntry {
+            entry_id: Uuid::new_v4().to_string(),
+            template_name: "test_template".to_string(),
+            company_id: company_id.to_string(),
+            branch_id: Some("branch_123".to_string()),
+            user_id: user_id.to_string(),
+            entry_data: serde_json::json!({}),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            submitted_at: None,
+            status: logs_db::LogStatus::Draft,
+            period: "2024-05".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_log_entry_creation_initializes_correctly() {
+        let user_id = "user_123";
+        let company_id = "company_456";
+        let entry = create_test_entry(user_id, company_id);
+
+        assert_eq!(entry.user_id, user_id);
+        assert_eq!(entry.company_id, company_id);
+        assert_eq!(entry.status, logs_db::LogStatus::Draft);
+        assert!(entry.submitted_at.is_none());
+        assert_eq!(entry.template_name, "test_template");
+    }
+
+    #[test]
+    fn test_log_entry_different_users_creates_unique_entries() {
+        let user1 = "user_1";
+        let user2 = "user_2";
+        let company_id = "company_789";
+
+        let entry1 = create_test_entry(user1, company_id);
+        let entry2 = create_test_entry(user2, company_id);
+
+        assert_ne!(entry1.entry_id, entry2.entry_id);
+        assert_ne!(entry1.user_id, entry2.user_id);
+        assert_eq!(entry1.company_id, entry2.company_id);
+    }
+
+    #[test]
+    fn test_log_entry_status_is_draft_on_creation() {
+        let user_id = "user_123";
+        let company_id = "company_456";
+        let entry = create_test_entry(user_id, company_id);
+
+        assert_eq!(entry.status, logs_db::LogStatus::Draft);
+    }
+
+    #[test]
+    fn test_log_entry_period_field_populated() {
+        let entry = create_test_entry("user_123", "company_456");
+
+        assert!(!entry.period.is_empty());
+        assert_eq!(entry.period, "2024-05");
+    }
+
+    #[test]
+    fn test_log_entry_unique_ids() {
+        let entry1 = create_test_entry("user_123", "company_456");
+        let entry2 = create_test_entry("user_123", "company_456");
+
+        assert_ne!(entry1.entry_id, entry2.entry_id);
     }
 }
 

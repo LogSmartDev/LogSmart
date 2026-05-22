@@ -10,10 +10,99 @@ use sqlx::PgPool;
 
 #[cfg(test)]
 mod auth_service_tests {
-    #[tokio::test]
-    async fn test_auth_service_basic() {
-        // Basic test to ensure service compiles
-        assert!(true);
+    use super::*;
+
+    #[test]
+    fn test_hash_password_valid_input() {
+        let password = "SecurePass123!@#";
+        let result = hash_password(password);
+        assert!(result.is_ok());
+        let hash = result.unwrap();
+        assert!(!hash.is_empty());
+        assert!(hash.len() > 20); // Argon2 hashes are typically long
+    }
+
+    #[test]
+    fn test_hash_password_empty_input() {
+        // hash_password is a low-level function that hashes any input
+        // Empty strings can be hashed; validation happens at policy level
+        let password = "";
+        let result = hash_password(password);
+        assert!(result.is_ok());
+        let hash = result.unwrap();
+        assert!(!hash.is_empty());
+    }
+
+    #[test]
+    fn test_password_policy_valid_password() {
+        let password = "ValidPass123!@#";
+        let result = validate_password_policy(password);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_password_policy_too_short() {
+        let password = "Pass1!";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_password_policy_no_special_characters() {
+        let password = "ValidPassword123";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_password_policy_no_uppercase() {
+        let password = "validpass123!@#";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_password_policy_no_numbers() {
+        let password = "ValidPass!@#";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_password_success() {
+        let password = "SecurePass123!@#";
+        let hash_result = hash_password(password);
+        assert!(hash_result.is_ok());
+        let hash = hash_result.unwrap();
+
+        let verify_result = verify_password(password, &hash);
+        assert!(verify_result.is_ok());
+        let is_valid = verify_result.unwrap();
+        assert!(is_valid);
+    }
+
+    #[test]
+    fn test_verify_password_failure() {
+        let password = "SecurePass123!@#";
+        let wrong_password = "WrongPass123!@#";
+        let hash_result = hash_password(password);
+        assert!(hash_result.is_ok());
+        let hash = hash_result.unwrap();
+
+        let verify_result = verify_password(wrong_password, &hash);
+        assert!(verify_result.is_ok());
+        let is_valid = verify_result.unwrap();
+        assert!(!is_valid);
+    }
+
+    #[test]
+    fn test_generate_uuid6_token() {
+        let token1 = generate_uuid6_token();
+        let token2 = generate_uuid6_token();
+
+        assert!(!token1.is_empty());
+        assert!(!token2.is_empty());
+        assert_ne!(token1, token2);
     }
 }
 

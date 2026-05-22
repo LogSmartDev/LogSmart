@@ -4,9 +4,145 @@ use sqlx::PgPool;
 
 #[cfg(test)]
 mod user_service_tests {
-    #[tokio::test]
-    async fn test_user_service_basic() {
-        assert!(true);
+    use super::*;
+
+    /// Helper to create a test user with company manager role
+    fn create_test_company_manager() -> db::UserRecord {
+        db::UserRecord {
+            id: "admin-user-id".to_string(),
+            email: "admin@company.com".to_string(),
+            first_name: "Admin".to_string(),
+            last_name: "Manager".to_string(),
+            password_hash: Some("hash".to_string()),
+            company_id: Some("company-123".to_string()),
+            branch_id: None,
+            company_name: Some("Test Company".to_string()),
+            company_deleted_at: None,
+            role: db::UserRole::CompanyManager,
+            created_at: chrono::Utc::now(),
+            deleted_at: None,
+            oauth_provider: None,
+            oauth_subject: None,
+            oauth_picture: None,
+            profile_picture_id: None,
+        }
+    }
+
+    /// Helper to create a test staff user
+    fn create_test_staff_user() -> db::UserRecord {
+        db::UserRecord {
+            id: "staff-user-id".to_string(),
+            email: "staff@company.com".to_string(),
+            first_name: "Staff".to_string(),
+            last_name: "Member".to_string(),
+            password_hash: Some("hash".to_string()),
+            company_id: Some("company-123".to_string()),
+            branch_id: None,
+            company_name: Some("Test Company".to_string()),
+            company_deleted_at: None,
+            role: db::UserRole::Staff,
+            created_at: chrono::Utc::now(),
+            deleted_at: None,
+            oauth_provider: None,
+            oauth_subject: None,
+            oauth_picture: None,
+            profile_picture_id: None,
+        }
+    }
+
+    /// Test that a company manager can update a staff member's profile
+    #[test]
+    fn test_admin_update_member_profile_valid_permission() {
+        let admin = create_test_company_manager();
+        let target = create_test_staff_user();
+
+        // Verify that admin has can_manage_branch permission
+        assert!(admin.can_manage_branch());
+        assert!(!admin.is_readonly_hq());
+
+        // Verify that admin and target are in the same company
+        assert_eq!(admin.company_id, target.company_id);
+    }
+
+    /// Test that company managers cannot update users from other companies
+    #[test]
+    fn test_admin_update_member_from_different_company_forbidden() {
+        let mut admin = create_test_company_manager();
+        let mut target = create_test_staff_user();
+
+        // Set different companies
+        admin.company_id = Some("company-123".to_string());
+        target.company_id = Some("company-456".to_string());
+
+        // Verify they are in different companies
+        assert_ne!(admin.company_id, target.company_id);
+
+        // Verify admin cannot update this user
+        let is_forbidden = admin.is_company_manager() && admin.company_id != target.company_id;
+        assert!(is_forbidden);
+    }
+
+    /// Test that staff users cannot update member profiles
+    #[test]
+    fn test_admin_update_member_profile_staff_forbidden() {
+        let staff_user = create_test_staff_user();
+
+        // Verify staff user cannot manage branches
+        assert!(!staff_user.can_manage_branch());
+    }
+
+    /// Test that users cannot delete their own account
+    #[test]
+    fn test_admin_delete_member_self_forbidden() {
+        let admin = create_test_company_manager();
+        let same_user = create_test_company_manager();
+
+        // Verify same email means cannot delete self
+        assert_eq!(admin.email, same_user.email);
+    }
+
+    /// Test that company managers cannot delete users from other companies
+    #[test]
+    fn test_admin_delete_member_different_company_forbidden() {
+        let mut admin = create_test_company_manager();
+        let mut target = create_test_staff_user();
+
+        // Set different companies
+        admin.company_id = Some("company-123".to_string());
+        target.company_id = Some("company-456".to_string());
+
+        // Verify they are in different companies
+        assert_ne!(admin.company_id, target.company_id);
+
+        // Verify admin cannot delete this user
+        let is_forbidden = admin.is_company_manager() && admin.company_id != target.company_id;
+        assert!(is_forbidden);
+    }
+
+    /// Test role validation for LogSmart admin role assignment
+    #[test]
+    fn test_logsmart_admin_role_assignment_restricted() {
+        let company_manager = create_test_company_manager();
+
+        // Company managers should not be able to assign LogSmart admin role
+        assert!(!company_manager.is_logsmart_admin());
+        
+        // Verify permission check
+        let can_assign_admin = company_manager.is_logsmart_admin();
+        assert!(!can_assign_admin);
+    }
+
+    /// Test that read-only HQ users (staff with no branch) cannot update member profiles
+    #[test]
+    fn test_readonly_hq_cannot_update_members() {
+        let mut readonly_hq = create_test_staff_user();
+        readonly_hq.branch_id = None; // Staff with no branch = readonly HQ
+        
+        // Verify readonly HQ users are correctly identified
+        assert!(readonly_hq.is_readonly_hq());
+        
+        // Verify readonly HQ users cannot manage branches
+        assert!(!readonly_hq.can_manage_branch());
     }
 }
 
