@@ -2,6 +2,7 @@ use crate::{
     AppState, db,
     dto::{ErrorResponse, SecurityLogDto, SecurityLogsQuery, SecurityLogsResponse},
     middleware::LogSmartAdminUser,
+    utils,
 };
 use axum::{
     Json,
@@ -9,7 +10,6 @@ use axum::{
     http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
 };
-use serde_json::json;
 
 const DEFAULT_SECURITY_LOG_LIMIT: i64 = 15;
 const MAX_SECURITY_LOG_LIMIT: i64 = 100;
@@ -91,11 +91,7 @@ pub async fn get_security_logs(
             })
             .into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to get security logs: {e}") })),
-        )
-            .into_response(),
+        Err(e) => utils::err_internal(&format!("Failed to get security logs: {e}")).into_response(),
     }
 }
 
@@ -159,11 +155,7 @@ pub async fn export_security_logs_csv(
     {
         Ok(rows) => rows,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to export security logs: {e}") })),
-            )
-                .into_response();
+            return utils::err_internal(&format!("Failed to export security logs: {e}")).into_response();
         }
     };
 
