@@ -4,6 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 #[macro_export]
 macro_rules! derive_from {
@@ -112,20 +113,24 @@ impl From<db::BranchWithDeletionStatus> for BranchDto {
     }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateBranchRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "London Office")]
     pub name: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "123 Regent St, London")]
     pub address: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateBranchRequest {
     #[schema(example = "550e8400-e29b-41d4-a716-446655440000")]
     pub branch_id: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "London Office")]
     pub name: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "123 Regent St, London")]
     pub address: String,
 }
@@ -299,18 +304,24 @@ pub struct SecurityLogsResponse {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct RegisterRequest {
+    #[validate(email)]
     #[schema(example = "admin@example.com")]
     pub email: String,
+    #[validate(length(min = 1, max = 100))]
     #[schema(example = "John")]
     pub first_name: String,
+    #[validate(length(min = 1, max = 100))]
     #[schema(example = "Doe")]
     pub last_name: String,
+    #[validate(length(min = 8))]
     #[schema(example = "SecurePass123!")]
     pub password: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Example Corp")]
     pub company_name: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "123 Main St, City, Country")]
     pub company_address: String,
 }
@@ -334,8 +345,9 @@ pub struct VerifyTokenRequest {
     pub token: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct AddTemplateRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Kitchen Daily Log")]
     pub template_name: String,
     #[schema(example = "[\"field1\", \"field2\"]")]
@@ -351,14 +363,16 @@ pub struct UpdateTemplateResponse {
     pub message: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct UpdateTemplateRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Kitchen Daily Log")]
     pub template_name: String,
     #[schema(example = "[\"field1\", \"field2\"]")]
     pub template_layout: Option<logs_db::TemplateLayout>,
     #[schema(example = "{\"frequency\": \"daily\", \"time\": \"08:00\"}")]
     pub schedule: Option<logs_db::Schedule>,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Major Update")]
     pub version_name: Option<String>,
     #[schema(example = "branch-uuid-here")]
@@ -403,16 +417,19 @@ pub struct GetAllTemplatesResponse {
     pub templates: Vec<TemplateInfo>,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct LoginRequest {
+    #[validate(email)]
     #[schema(example = "admin@example.com")]
     pub email: String,
+    #[validate(length(min = 1))]
     #[schema(example = "SecurePass123!")]
     pub password: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct InviteUserRequest {
+    #[validate(email)]
     #[schema(example = "newmember@example.com")]
     pub email: String,
     #[schema(example = "staff")]

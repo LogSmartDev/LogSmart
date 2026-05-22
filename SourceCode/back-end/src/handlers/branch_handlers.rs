@@ -12,6 +12,7 @@ use crate::{
     utils::AuditLogger,
 };
 use axum::{Json, extract::State, http::StatusCode};
+use validator::Validate;
 
 #[utoipa::path(
     post,
@@ -33,6 +34,10 @@ pub async fn create_branch(
     State(state): State<AppState>,
     Json(payload): Json<CreateBranchRequest>,
 ) -> Result<(StatusCode, Json<BranchDto>), crate::error::AppError> {
+    // Validate request payload
+    payload.validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+
     let company_id = user.company_id.clone().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     let branch = db::create_branch(
@@ -117,17 +122,11 @@ pub async fn update_branch(
     State(state): State<AppState>,
     Json(payload): Json<UpdateBranchRequest>,
 ) -> Result<Json<BranchDto>, crate::error::AppError> {
+    // Validate request payload
+    payload.validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+
     let company_id = user.company_id.clone().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
-
-    // Validate branch name is not empty
-    if payload.name.trim().is_empty() {
-        return Err(crate::error::AppError::BadRequest("Branch name cannot be empty".to_string()));
-    }
-
-    // Validate address is not empty
-    if payload.address.trim().is_empty() {
-        return Err(crate::error::AppError::BadRequest("Branch address cannot be empty".to_string()));
-    }
 
     // Verify the branch belongs to the user's company
     let branch = db::get_branch_by_id(&state.postgres, &payload.branch_id)

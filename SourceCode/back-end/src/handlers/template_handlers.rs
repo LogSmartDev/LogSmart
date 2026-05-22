@@ -13,6 +13,7 @@ use axum::{
     Json,
     extract::{Query, State},
 };
+use validator::Validate;
 
 #[utoipa::path(
     post,
@@ -33,6 +34,10 @@ pub async fn add_template(
     State(state): State<AppState>,
     Json(payload): Json<AddTemplateRequest>,
 ) -> Result<Json<AddTemplateResponse>, crate::error::AppError> {
+    // Validate request payload
+    payload.validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+
     // Branch managers can only create templates for their own branch
     if user.is_branch_manager() {
         if payload.branch_id.is_none() {
@@ -179,6 +184,10 @@ pub async fn update_template(
     State(state): State<AppState>,
     Json(payload): Json<UpdateTemplateRequest>,
 ) -> Result<Json<UpdateTemplateResponse>, crate::error::AppError> {
+    // Validate request payload
+    payload.validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+
     services::TemplateService::update_template(
         &state,
         &payload.template_name,

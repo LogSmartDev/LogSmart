@@ -23,6 +23,7 @@ use axum::{
     http::{self, HeaderMap, StatusCode, header::SET_COOKIE},
     response::IntoResponse,
 };
+use validator::Validate;
 
 #[utoipa::path(
     post,
@@ -141,21 +142,9 @@ pub async fn register_company_admin(
     let ip_address = extract_ip_from_headers_and_addr(&headers, &addr);
     let user_agent = extract_user_agent(&headers);
 
-    if payload.email.is_empty()
-        || payload.first_name.is_empty()
-        || payload.last_name.is_empty()
-        || payload.password.is_empty()
-        || payload.company_name.is_empty()
-        || payload.company_address.is_empty()
-    {
-        return Err(crate::error::AppError::BadRequest(
-            "Missing required fields".to_string(),
-        ));
-    }
-
-    if let Err(e) = validate_email(&payload.email) {
-        return Err(crate::error::AppError::BadRequest(e.to_string()));
-    }
+    // Validate request payload
+    payload.validate()
+        .map_err(|e| err_bad_request(&format!("Validation failed: {e}")))?;
 
     if let Err(e) = validate_password_policy(&payload.password) {
         return Err(crate::error::AppError::BadRequest(e.to_string()));
@@ -254,9 +243,9 @@ pub async fn login(
     let ip_address = extract_ip_from_headers_and_addr(&headers, &addr);
     let user_agent = extract_user_agent(&headers);
 
-    if payload.email.is_empty() || payload.password.is_empty() {
-        return Err(err_bad_request("Missing email or password"));
-    }
+    // Validate request payload
+    payload.validate()
+        .map_err(|e| err_bad_request(&format!("Validation failed: {e}")))?;
 
     let (token, user): (String, db::UserRecord) = services::AuthService::verify_credentials(
         &state.postgres,

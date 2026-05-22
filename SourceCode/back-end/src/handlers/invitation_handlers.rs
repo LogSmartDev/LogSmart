@@ -5,7 +5,7 @@ use crate::middleware::{
 use crate::utils::{extract_ip_from_headers_and_addr, extract_user_agent};
 use crate::{
     AppState,
-    auth::{hash_password, validate_email, validate_password_policy},
+    auth::{hash_password, validate_password_policy},
     db,
     dto::{
         AcceptInvitationRequest, AuthResponse, CancelInvitationRequest, ErrorResponse,
@@ -23,6 +23,7 @@ use axum::{
     response::IntoResponse,
 };
 use serde_json::json;
+use validator::Validate;
 
 #[utoipa::path(
     post,
@@ -57,13 +58,9 @@ pub async fn invite_user(
     let ip_address = extract_ip_from_headers_and_addr(&headers, &addr);
     let user_agent = extract_user_agent(&headers);
 
-    if payload.email.is_empty() {
-        return Err(crate::error::AppError::BadRequest("Email is required".to_string()));
-    }
-
-    if let Err(e) = validate_email(&payload.email) {
-        return Err(crate::error::AppError::BadRequest(e.to_string() .to_string()));
-    }
+    // Validate request payload
+    payload.validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
 
     // Branch managers can only invite staff to their own branch
     if user.is_branch_manager() {
