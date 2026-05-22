@@ -79,7 +79,8 @@ impl InvitationService {
 
         let invite_link = format!(
             "{}/accept-invitation?token={}",
-            "https://logsmart.app", invitation.token
+            std::env::var("FRONTEND_URL").unwrap_or_else(|_| "https://logsmart.app".to_string()),
+            invitation.token
         );
 
         email::send_invitation_email(&recipient_email, &invite_link, &company_name)

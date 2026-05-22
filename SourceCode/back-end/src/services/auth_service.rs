@@ -243,7 +243,8 @@ impl AuthService {
 
             let reset_link = format!(
                 "{}/reset-password?token={}",
-                "https://logsmart.app", reset_token
+                std::env::var("FRONTEND_URL").unwrap_or_else(|_| "https://logsmart.app".to_string()),
+                reset_token
             );
 
             crate::email::send_password_reset_email(&user_record.email, &reset_link)

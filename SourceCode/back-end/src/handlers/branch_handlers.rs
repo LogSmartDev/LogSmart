@@ -226,7 +226,8 @@ pub async fn request_branch_deletion(
 
     let confirmation_link = format!(
         "{}/confirm-branch-deletion?token={}",
-        "https://logsmart.app", token
+        std::env::var("FRONTEND_URL").unwrap_or_else(|_| "https://logsmart.app".to_string()),
+        token
     );
 
     email::send_branch_deletion_confirmation_email(&user.email, &branch.name, &confirmation_link)
