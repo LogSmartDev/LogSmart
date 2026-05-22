@@ -26,7 +26,7 @@ pub async fn setup_test_db() -> PgPool {
 }
 
 /// Common test utilities and re-exports
-// Note: mocks module is available but not all functions are re-exported
+/// Note: mocks module is available but not all functions are re-exported
 // pub use mocks::*;
 
 // /// Test helper for creating test application
