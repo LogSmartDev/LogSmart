@@ -1,5 +1,5 @@
-use anyhow::Result;
 use sqlx::PgPool;
+use crate::error::DbError;
 
 use super::types::*;
 
@@ -7,7 +7,7 @@ use super::types::*;
 ///
 /// # Errors
 /// Returns an error if database queries for metrics fail.
-pub async fn get_database_health(pool: &PgPool) -> Result<DatabaseHealthMetrics> {
+pub async fn get_database_health(pool: &PgPool) -> Result<DatabaseHealthMetrics, DbError> {
     #[derive(sqlx::FromRow)]
     struct ConnectionStats {
         total: i64,
@@ -88,7 +88,7 @@ pub async fn get_database_health(pool: &PgPool) -> Result<DatabaseHealthMetrics>
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-pub async fn get_slow_queries(pool: &PgPool, limit: i64) -> Result<Vec<SlowQueryInfo>> {
+pub async fn get_slow_queries(pool: &PgPool, limit: i64) -> Result<Vec<SlowQueryInfo>, DbError> {
     let queries = sqlx::query_as::<_, SlowQueryInfo>(
         r"
         SELECT 
@@ -115,7 +115,7 @@ pub async fn get_slow_queries(pool: &PgPool, limit: i64) -> Result<Vec<SlowQuery
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-pub async fn get_index_usage(pool: &PgPool) -> Result<Vec<IndexUsageStats>> {
+pub async fn get_index_usage(pool: &PgPool) -> Result<Vec<IndexUsageStats>, DbError> {
     let stats = sqlx::query_as::<_, IndexUsageStats>(
         r"
         SELECT 
@@ -140,7 +140,7 @@ pub async fn get_index_usage(pool: &PgPool) -> Result<Vec<IndexUsageStats>> {
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-pub async fn get_table_sizes(pool: &PgPool) -> Result<Vec<TableSizeInfo>> {
+pub async fn get_table_sizes(pool: &PgPool) -> Result<Vec<TableSizeInfo>, DbError> {
     #[derive(sqlx::FromRow)]
     struct TableSizeRow {
         table_name: String,
@@ -182,7 +182,7 @@ pub async fn get_table_sizes(pool: &PgPool) -> Result<Vec<TableSizeInfo>> {
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-pub async fn check_unused_indexes(pool: &PgPool) -> Result<Vec<String>> {
+pub async fn check_unused_indexes(pool: &PgPool) -> Result<Vec<String>, DbError> {
     #[derive(sqlx::FromRow)]
     struct UnusedIndex {
         index_name: String,

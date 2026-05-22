@@ -54,7 +54,7 @@ async fn test_invite_handler(
     BranchManagerUser(claims, user): BranchManagerUser,
     State(state): State<AppState>,
     Json(payload): Json<dto::InviteUserRequest>,
-) -> Result<(StatusCode, Json<dto::InvitationResponse>), (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<dto::InvitationResponse>), back_end::error::AppError> {
     let mock_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let headers = HeaderMap::new();
     handlers::invite_user(

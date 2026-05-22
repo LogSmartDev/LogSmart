@@ -40,21 +40,18 @@ pub async fn list_due_forms_today(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<DueFormsResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<DueFormsResponse>, crate::error::AppError> {
     let max = params
         .get("max")
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(20);
 
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     let templates =
         services::LogEntryService::list_due_forms(&state, &company_id, user.branch_id.as_deref())
             .await
-            .map_err(|(status, err)| (status, Json(err)))?;
+            ?;
 
     let now = chrono::Utc::now();
 
@@ -70,12 +67,9 @@ pub async fn list_due_forms_today(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Failed to get latest submitted entries: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to retrieve due forms" })),
-        )
-    })?;
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+        })?;
 
     // Now compute missed periods using actual last submitted periods
     let mut template_due_counts: HashMap<String, usize> = HashMap::new();
@@ -130,12 +124,9 @@ pub async fn list_due_forms_today(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Failed to get periods with entries: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to retrieve due forms" })),
-        )
-    })?;
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+        })?;
 
     let mut due_forms = Vec::new();
     let mut seen_forms: HashSet<(String, String)> = HashSet::new();
@@ -221,12 +212,9 @@ pub async fn list_due_forms_today(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Failed to check submission status: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to retrieve due forms" })),
-                )
-            })?;
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+        })?;
 
             // Single batch query for all draft entries
             let draft_map = logs_db::get_draft_entries_batch(
@@ -237,12 +225,9 @@ pub async fn list_due_forms_today(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Failed to get draft entries: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to retrieve due forms" })),
-                )
-            })?;
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+        })?;
 
             for template in due_today_templates {
                 let has_submitted = submitted_map.get(&template.template_name).copied().unwrap_or(false);
@@ -324,12 +309,9 @@ pub async fn create_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Json(payload): Json<CreateLogEntryRequest>,
-) -> Result<(StatusCode, Json<CreateLogEntryResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<CreateLogEntryResponse>), crate::error::AppError> {
     if payload.template_name.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Template name is required" })),
-        ));
+        return Err(crate::error::AppError::BadRequest("Template name is required".to_string()));
     }
 
     let entry_id = services::LogEntryService::create_log_entry(
@@ -339,7 +321,7 @@ pub async fn create_log_entry(
         payload.period.as_deref(),
     )
     .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    ?;
 
     Ok((
         StatusCode::CREATED,
@@ -371,29 +353,20 @@ pub async fn get_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<LogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<LogEntryResponse>, crate::error::AppError> {
     let entry = services::LogEntryService::get_log_entry(&state, &user, &entry_id)
         .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+        ?;
 
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     let template = logs_db::get_template_by_name(&state.mongodb, &entry.template_name, &company_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to get template: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to get template" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get template".to_string())
         })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Template not found" })),
-        ))?;
+        .ok_or(crate::error::AppError::NotFound("Template not found".to_string()))?;
 
     let processed_layout = logs_db::process_template_layout_with_period_string(
         &template.template_layout,
@@ -443,7 +416,7 @@ pub async fn update_log_entry(
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
     Json(payload): Json<UpdateLogEntryRequest>,
-) -> Result<Json<LogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<LogEntryResponse>, crate::error::AppError> {
     let updated_entry = services::LogEntryService::update_log_entry(
         &state,
         &user.id,
@@ -451,27 +424,18 @@ pub async fn update_log_entry(
         &payload.entry_data,
     )
     .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    ?;
 
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     let template =
         logs_db::get_template_by_name(&state.mongodb, &updated_entry.template_name, &company_id)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to get template: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to get template" })),
-                )
-            })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Template not found" })),
-            ))?;
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get template".to_string())
+        })?
+            .ok_or(crate::error::AppError::NotFound("Template not found".to_string()))?;
 
     let processed_layout = logs_db::process_template_layout_with_period_string(
         &template.template_layout,
@@ -519,10 +483,10 @@ pub async fn submit_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<SubmitLogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<SubmitLogEntryResponse>, crate::error::AppError> {
     services::LogEntryService::submit_log_entry(&state, &user.id, &entry_id)
         .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+        ?;
 
     Ok(Json(SubmitLogEntryResponse {
         message: "Log entry submitted successfully.".to_string(),
@@ -550,10 +514,10 @@ pub async fn unsubmit_log_entry(
     BranchManagerUser(_claims, user): BranchManagerUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<SubmitLogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<SubmitLogEntryResponse>, crate::error::AppError> {
     services::LogEntryService::unsubmit_log_entry(&state, &user, &entry_id)
         .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+        ?;
 
     Ok(Json(SubmitLogEntryResponse {
         message: "Log entry returned to draft successfully.".to_string(),
@@ -581,10 +545,10 @@ pub async fn delete_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     services::LogEntryService::delete_log_entry(&state, &user, &entry_id)
         .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+        ?;
 
     Ok(Json(json!({ "message": "Log entry deleted successfully" })))
 }
@@ -609,11 +573,8 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String, S>>,
-) -> Result<Json<ListLogEntriesResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.clone().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<ListLogEntriesResponse>, crate::error::AppError> {
+    let company_id = user.company_id.clone().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     // Parse optional branch_ids parameter (comma-separated)
     let branch_ids_param = params.get("branch_ids");
@@ -635,19 +596,13 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
         }
     } else {
         // Branch manager - only their branch
-        let branch_id = user.branch_id.as_ref().ok_or((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Branch manager has no branch assigned" })),
-        ))?;
+        let branch_id = user.branch_id.as_ref().ok_or(crate::error::AppError::Forbidden("Branch manager has no branch assigned".to_string()))?;
         logs_db::get_branch_log_entries(&state.mongodb, &company_id, branch_id).await
     }
     .map_err(|e| {
-        tracing::error!("Failed to get log entries: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to get log entries" })),
-        )
-    })?;
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get log entries".to_string())
+        })?;
 
     let mut response_entries = Vec::new();
 
@@ -655,11 +610,8 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
     let all_templates = logs_db::get_templates_by_company(&state.mongodb, &company_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to get templates: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to get templates" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get templates".to_string())
         })?;
     let template_map: HashMap<&str, &logs_db::TemplateDocument> = all_templates
         .iter()
@@ -729,16 +681,13 @@ pub async fn list_user_log_entries(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<ListLogEntriesResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<ListLogEntriesResponse>, crate::error::AppError> {
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     let mut entries =
         services::LogEntryService::get_user_log_entries(&state, &user.id, &company_id)
             .await
-            .map_err(|(status, err)| (status, Json(err)))?;
+            ?;
 
     if let Some(template_name) = params.get("template_name") {
         entries.retain(|e| e.template_name == *template_name);
@@ -748,11 +697,8 @@ pub async fn list_user_log_entries(
     let all_templates = logs_db::get_templates_by_company(&state.mongodb, &company_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to get templates: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to get templates" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get templates".to_string())
         })?;
     let template_map: HashMap<&str, &logs_db::TemplateDocument> = all_templates
         .iter()
@@ -828,17 +774,11 @@ pub async fn create_report_run(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Json(mut payload): Json<CreateReportRunRequest>,
-) -> Result<(StatusCode, Json<CreateReportRunResponse>), (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<(StatusCode, Json<CreateReportRunResponse>), crate::error::AppError> {
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     if payload.params.date_from_iso.is_empty() || payload.params.date_to_iso.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "date_from_iso and date_to_iso are required" })),
-        ));
+        return Err(crate::error::AppError::BadRequest("date_from_iso and date_to_iso are required".to_string()));
     }
 
     payload.params = logs_db::normalize_report_params(&payload.params);
@@ -860,11 +800,8 @@ pub async fn create_report_run(
     let saved = logs_db::create_report_run(&state.mongodb, &doc)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to save report run: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to save report run" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to save report run".to_string())
         })?;
 
     Ok((
@@ -900,11 +837,8 @@ pub async fn list_report_runs(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<ListReportRunsResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<ListReportRunsResponse>, crate::error::AppError> {
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     let limit = params
         .get("limit")
@@ -915,11 +849,8 @@ pub async fn list_report_runs(
     let runs = logs_db::list_report_runs(&state.mongodb, &user.id, &company_id, limit)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to list report runs: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to list report runs" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to list report runs".to_string())
         })?;
 
     let mut seen = std::collections::HashSet::new();
@@ -927,12 +858,9 @@ pub async fn list_report_runs(
     for run in runs {
         let key = if run.params_key.is_empty() {
             logs_db::report_params_key(&run.params).map_err(|e| {
-                tracing::error!("Failed to compute report run key: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to list report runs" })),
-                )
-            })?
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to list report runs".to_string())
+        })?
         } else {
             run.params_key.clone()
         };
@@ -976,27 +904,18 @@ pub async fn use_report_run(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Path(report_id): Path<String>,
-) -> Result<Json<UseReportRunResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<UseReportRunResponse>, crate::error::AppError> {
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     let touched = logs_db::touch_report_run(&state.mongodb, &report_id, &user.id, &company_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to update report run usage: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to update report run usage" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to update report run usage".to_string())
         })?;
 
     if !touched {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Report run not found" })),
-        ));
+        return Err(crate::error::AppError::NotFound("Report run not found".to_string()));
     }
 
     Ok(Json(UseReportRunResponse {
@@ -1023,11 +942,8 @@ pub async fn delete_report_run(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Path(report_id): Path<String>,
-) -> Result<Json<DeleteReportRunResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<DeleteReportRunResponse>, crate::error::AppError> {
+    let company_id = user.company_id.ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
 
     tracing::info!(
         target: "report_runs",
@@ -1048,10 +964,7 @@ pub async fn delete_report_run(
                 company_id,
                 e
             );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to delete report run" })),
-            )
+            crate::error::AppError::Internal("Failed to delete report run" .to_string())
         })?;
 
     if !deleted {
@@ -1062,10 +975,7 @@ pub async fn delete_report_run(
             user.id,
             company_id
         );
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Report run not found" })),
-        ));
+        return Err(crate::error::AppError::NotFound("Report run not found".to_string()));
     }
 
     tracing::info!(

@@ -1,5 +1,5 @@
-use anyhow::Result;
 use sqlx::PgPool;
+use crate::error::DbError;
 use uuid::Uuid;
 
 use super::types::*;
@@ -17,7 +17,7 @@ pub async fn create_user<'a, E>(
     password_hash: Option<String>,
     company_id: Option<String>,
     role: UserRole,
-) -> Result<UserRecord>
+) -> Result<UserRecord, DbError>
 where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
 {
@@ -65,7 +65,7 @@ where
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_user_company_id(pool: &PgPool, user_id: &str) -> Result<Option<String>> {
+pub async fn get_user_company_id(pool: &PgPool, user_id: &str) -> Result<Option<String>, DbError> {
     #[derive(sqlx::FromRow)]
     struct CompanyIdRow {
         company_id: Option<String>,
@@ -89,7 +89,7 @@ pub async fn get_user_company_id(pool: &PgPool, user_id: &str) -> Result<Option<
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<UserRecord>> {
+pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<UserRecord>, DbError> {
     let user = sqlx::query_as::<_, UserRecord>(
         &format!("{USER_SELECT_COLUMNS}\n        WHERE users.email = $1 AND users.deleted_at IS NULL\n        "),
     )
@@ -104,7 +104,7 @@ pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_user_by_id(pool: &PgPool, id: &str) -> Result<Option<UserRecord>> {
+pub async fn get_user_by_id(pool: &PgPool, id: &str) -> Result<Option<UserRecord>, DbError> {
     let user = sqlx::query_as::<_, UserRecord>(
         &format!("{USER_SELECT_COLUMNS}\n        WHERE users.id = $1 AND users.deleted_at IS NULL\n        "),
     )
@@ -134,7 +134,7 @@ pub async fn get_user_by_oauth(
     pool: &PgPool,
     provider: &str,
     subject: &str,
-) -> Result<Option<UserRecord>> {
+) -> Result<Option<UserRecord>, DbError> {
     let user = sqlx::query_as::<_, UserRecord>(
         &format!("{USER_SELECT_COLUMNS}\n        WHERE users.oauth_provider = $1 AND users.oauth_subject = $2 AND users.deleted_at IS NULL\n        "),
     )
@@ -160,7 +160,7 @@ pub async fn create_oauth_user<'a, E>(
     oauth_picture: Option<String>,
     company_id: Option<String>,
     role: UserRole,
-) -> Result<UserRecord>
+) -> Result<UserRecord, DbError>
 where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
 {
@@ -216,7 +216,7 @@ pub async fn link_oauth_to_user(
     oauth_provider: String,
     oauth_subject: String,
     oauth_picture: Option<String>,
-) -> Result<()> {
+) -> Result<(), DbError> {
     sqlx::query(
         r"
         UPDATE users
@@ -238,7 +238,7 @@ pub async fn link_oauth_to_user(
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn unlink_oauth_from_user(pool: &PgPool, user_id: &str) -> Result<()> {
+pub async fn unlink_oauth_from_user(pool: &PgPool, user_id: &str) -> Result<(), DbError> {
     let query = sqlx::query(
         r"
         UPDATE users
@@ -251,7 +251,7 @@ pub async fn unlink_oauth_from_user(pool: &PgPool, user_id: &str) -> Result<()> 
     .await?;
 
     if query.rows_affected() == 0 {
-        return Err(anyhow::anyhow!("Oauth account not found for user"));
+        return Err(DbError::Internal("Oauth account not found for user".to_string()));
     }
     Ok(())
 }
@@ -260,7 +260,7 @@ pub async fn unlink_oauth_from_user(pool: &PgPool, user_id: &str) -> Result<()> 
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn delete_user_by_email(pool: &PgPool, email: &str) -> Result<()> {
+pub async fn delete_user_by_email(pool: &PgPool, email: &str) -> Result<(), DbError> {
     sqlx::query(
         r"
         UPDATE users
@@ -280,7 +280,7 @@ pub async fn delete_user_by_email(pool: &PgPool, email: &str) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn soft_delete_users_by_company_id(pool: &PgPool, company_id: &str) -> Result<()> {
+pub async fn soft_delete_users_by_company_id(pool: &PgPool, company_id: &str) -> Result<(), DbError> {
     sqlx::query(
         r"
         UPDATE users
@@ -300,7 +300,7 @@ pub async fn soft_delete_users_by_company_id(pool: &PgPool, company_id: &str) ->
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_users_by_company_id(pool: &PgPool, company_id: &str) -> Result<Vec<UserRecord>> {
+pub async fn get_users_by_company_id(pool: &PgPool, company_id: &str) -> Result<Vec<UserRecord>, DbError> {
     let users = sqlx::query_as::<_, UserRecord>(
         &format!("{USER_SELECT_COLUMNS}\n        WHERE users.company_id = $1 AND users.deleted_at IS NULL\n        ")
     )
@@ -318,7 +318,7 @@ pub async fn get_users_by_company_id(pool: &PgPool, company_id: &str) -> Result<
 pub async fn get_all_users_by_company_id(
     pool: &PgPool,
     company_id: &str,
-) -> Result<Vec<UserRecord>> {
+) -> Result<Vec<UserRecord>, DbError> {
     let users = sqlx::query_as::<_, UserRecord>(
         &format!("{USER_SELECT_COLUMNS}\n        WHERE users.company_id = $1\n        ")
     )
@@ -333,7 +333,7 @@ pub async fn get_all_users_by_company_id(
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_company_members_for_user(pool: &PgPool, user_id: &str) -> Result<Vec<UserRecord>> {
+pub async fn get_company_members_for_user(pool: &PgPool, user_id: &str) -> Result<Vec<UserRecord>, DbError> {
     tracing::info!("DB: Fetching members for user_id: {}", user_id);
     let users = sqlx::query_as::<_, UserRecord>(
         r"
@@ -373,7 +373,7 @@ pub async fn update_user_profile(
     user_id: &str,
     first_name: String,
     last_name: String,
-) -> Result<UserRecord> {
+) -> Result<UserRecord, DbError> {
     let user = sqlx::query_as::<_, UserRecord>(
         r"
         WITH updated AS (
@@ -400,7 +400,7 @@ pub async fn update_user_profile_picture_id(
     pool: &PgPool,
     user_id: &str,
     picture_id: Option<&str>,
-) -> Result<UserRecord> {
+) -> Result<UserRecord, DbError> {
     let user = sqlx::query_as::<_, UserRecord>(
         r"
         WITH updated AS (
@@ -434,7 +434,7 @@ pub async fn update_user_profile_full(
     role: UserRole,
     branch_id: Option<String>,
     profile_picture_id: Option<String>,
-) -> Result<UserRecord> {
+) -> Result<UserRecord, DbError> {
     let user = sqlx::query_as::<_, UserRecord>(
         r"
         WITH updated AS (
@@ -468,7 +468,7 @@ pub async fn update_user_password(
     pool: &PgPool,
     user_id: &str,
     password_hash: String,
-) -> Result<()> {
+) -> Result<(), DbError> {
     sqlx::query(
         r"
         UPDATE users
@@ -492,7 +492,7 @@ pub async fn update_user_branch(
     pool: &PgPool,
     user_id: &str,
     branch_id: Option<String>,
-) -> Result<()> {
+) -> Result<(), DbError> {
     sqlx::query(
         r"
         UPDATE users

@@ -1,6 +1,6 @@
 use std::fmt::Write;
+use crate::error::DbError;
 
-use anyhow::Result;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -22,7 +22,7 @@ pub async fn log_security_event(
     meta: SecurityLogMeta,
     details: Option<String>,
     success: bool,
-) -> Result<SecurityLog> {
+) -> Result<SecurityLog, DbError> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
 
@@ -81,7 +81,7 @@ pub async fn get_security_logs_by_user(
     pool: &PgPool,
     user_id: &str,
     limit: i64,
-) -> Result<Vec<SecurityLog>> {
+) -> Result<Vec<SecurityLog>, DbError> {
     let logs = sqlx::query_as::<_, SecurityLog>(
         &format!("{SECURITY_LOG_SELECT_COLUMNS}\n        WHERE user_id = $1\n        ORDER BY created_at DESC\n        LIMIT $2\n        "),
     )
@@ -101,7 +101,7 @@ pub async fn get_recent_security_logs(
     pool: &PgPool,
     event_type: Option<String>,
     limit: i64,
-) -> Result<Vec<SecurityLog>> {
+) -> Result<Vec<SecurityLog>, DbError> {
     let logs = if let Some(evt) = event_type {
         sqlx::query_as::<_, SecurityLog>(
             &format!("{SECURITY_LOG_SELECT_COLUMNS}\n            WHERE event_type = $1\n            ORDER BY created_at DESC\n            LIMIT $2\n            "),
@@ -257,7 +257,7 @@ pub async fn get_security_logs_page(
     filters: &SecurityLogFilters,
     limit: i64,
     cursor: Option<(chrono::DateTime<chrono::Utc>, String)>,
-) -> Result<SecurityLogsPage> {
+) -> Result<SecurityLogsPage, DbError> {
     let safe_limit = limit.clamp(1, 100);
     let fetch_limit = safe_limit + 1;
 
@@ -319,7 +319,7 @@ pub async fn get_security_logs_for_export(
     pool: &PgPool,
     filters: &SecurityLogFilters,
     limit: i64,
-) -> Result<Vec<SecurityLog>> {
+) -> Result<Vec<SecurityLog>, DbError> {
     let safe_limit = limit.clamp(1, 10_000);
 
     let mut query_str = format!("{SECURITY_LOG_SELECT_COLUMNS}\n        WHERE 1=1\n        ");
@@ -343,7 +343,7 @@ pub fn format_security_logs_cursor(created_at: chrono::DateTime<chrono::Utc>, id
     encode_cursor(created_at, id)
 }
 
-pub fn parse_security_logs_cursor(cursor: &str) -> Result<(chrono::DateTime<chrono::Utc>, String)> {
+pub fn parse_security_logs_cursor(cursor: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), DbError> {
     decode_cursor(cursor)
 }
 

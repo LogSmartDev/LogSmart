@@ -1,6 +1,6 @@
 use std::fmt::Write;
+use crate::error::DbError;
 
-use anyhow::Result;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -12,7 +12,7 @@ use super::{encode_cursor, decode_cursor};
 ///
 /// # Errors
 /// Returns an error if the database insert fails.
-pub async fn clock_in(pool: &PgPool, user_id: &str, company_id: &str) -> Result<ClockEvent> {
+pub async fn clock_in(pool: &PgPool, user_id: &str, company_id: &str) -> Result<ClockEvent, DbError> {
     let id = Uuid::new_v4().to_string();
     let event = sqlx::query_as::<_, ClockEvent>(
         &format!("INSERT INTO clock_events (id, user_id, company_id, clock_in)\n        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)\n        {CLOCK_EVENT_RETURNING}\n        "),
@@ -30,7 +30,7 @@ pub async fn clock_in(pool: &PgPool, user_id: &str, company_id: &str) -> Result<
 ///
 /// # Errors
 /// Returns an error if the database update fails.
-pub async fn clock_out(pool: &PgPool, user_id: &str) -> Result<Option<ClockEvent>> {
+pub async fn clock_out(pool: &PgPool, user_id: &str) -> Result<Option<ClockEvent>, DbError> {
     let event = sqlx::query_as::<_, ClockEvent>(
         &format!("UPDATE clock_events\n        SET clock_out = CURRENT_TIMESTAMP\n        WHERE id = (\n            SELECT id FROM clock_events\n            WHERE user_id = $1 AND clock_out IS NULL\n            ORDER BY clock_in DESC\n            LIMIT 1\n        )\n        {CLOCK_EVENT_RETURNING}\n        "),
     )
@@ -50,7 +50,7 @@ pub async fn clock_out_at(
     pool: &PgPool,
     user_id: &str,
     clock_out_at: chrono::DateTime<chrono::Utc>,
-) -> Result<Option<ClockEvent>> {
+) -> Result<Option<ClockEvent>, DbError> {
     let event = sqlx::query_as::<_, ClockEvent>(
         &format!("UPDATE clock_events\n        SET clock_out = $2\n        WHERE id = (\n            SELECT id FROM clock_events\n            WHERE user_id = $1 AND clock_out IS NULL\n            ORDER BY clock_in DESC\n            LIMIT 1\n        )\n        {CLOCK_EVENT_RETURNING}\n        "),
     )
@@ -66,7 +66,7 @@ pub async fn clock_out_at(
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-pub async fn get_clock_status(pool: &PgPool, user_id: &str) -> Result<Option<ClockEvent>> {
+pub async fn get_clock_status(pool: &PgPool, user_id: &str) -> Result<Option<ClockEvent>, DbError> {
     let event = sqlx::query_as::<_, ClockEvent>(
         &format!("{CLOCK_EVENT_SELECT_COLUMNS}\n        WHERE user_id = $1\n        ORDER BY created_at DESC\n        LIMIT 1\n        "),
     )
@@ -85,7 +85,7 @@ pub async fn get_recent_clock_events(
     pool: &PgPool,
     user_id: &str,
     limit: i64,
-) -> Result<Vec<ClockEvent>> {
+) -> Result<Vec<ClockEvent>, DbError> {
     let events = sqlx::query_as::<_, ClockEvent>(
         &format!("{CLOCK_EVENT_SELECT_COLUMNS}\n        WHERE user_id = $1\n        ORDER BY created_at DESC\n        LIMIT $2\n        "),
     )
@@ -111,7 +111,7 @@ pub async fn get_company_clock_events(
     branch_id: Option<String>,
     limit: Option<i64>,
     cursor: Option<String>,
-) -> Result<(Vec<CompanyClockEventRow>, Option<String>)> {
+) -> Result<(Vec<CompanyClockEventRow>, Option<String>), DbError> {
     let limit = limit.unwrap_or(25).max(1).min(100);
     let cursor = cursor.and_then(|c| parse_clock_events_cursor(&c).ok());
 
@@ -199,6 +199,6 @@ pub fn create_clock_events_cursor(created_at: chrono::DateTime<chrono::Utc>, id:
     encode_cursor(created_at, id)
 }
 
-pub fn parse_clock_events_cursor(cursor: &str) -> Result<(chrono::DateTime<chrono::Utc>, String)> {
+pub fn parse_clock_events_cursor(cursor: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), DbError> {
     decode_cursor(cursor)
 }

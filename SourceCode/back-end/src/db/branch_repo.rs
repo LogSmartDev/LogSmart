@@ -1,5 +1,5 @@
-use anyhow::Result;
 use sqlx::PgPool;
+use crate::error::DbError;
 use uuid::Uuid;
 
 use super::types::*;
@@ -14,7 +14,7 @@ pub async fn create_branch<'a, E>(
     company_id: String,
     name: String,
     address: String,
-) -> Result<Branch>
+) -> Result<Branch, DbError>
 where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
 {
@@ -51,7 +51,7 @@ where
 pub async fn get_branches_by_company_id_with_deletion_status(
     pool: &PgPool,
     company_id: &str,
-) -> Result<Vec<BranchWithDeletionStatus>> {
+) -> Result<Vec<BranchWithDeletionStatus>, DbError> {
     #[derive(sqlx::FromRow)]
     struct BranchDeletionRow {
         id: String,
@@ -100,7 +100,7 @@ pub async fn get_branches_by_company_id_with_deletion_status(
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_branch_by_id(pool: &PgPool, branch_id: &str) -> Result<Option<Branch>> {
+pub async fn get_branch_by_id(pool: &PgPool, branch_id: &str) -> Result<Option<Branch>, DbError> {
     let branch = sqlx::query_as::<_, Branch>(
         &format!("{BRANCH_SELECT_COLUMNS}\n        WHERE id = $1\n        "),
     )
@@ -120,7 +120,7 @@ pub async fn update_branch(
     branch_id: &str,
     name: &str,
     address: &str,
-) -> Result<Branch> {
+) -> Result<Branch, DbError> {
     let updated_branch = sqlx::query_as::<_, Branch>(
         r"
         UPDATE branches
@@ -142,7 +142,7 @@ pub async fn update_branch(
 ///
 /// # Errors
 /// Returns an error if database delete fails.
-pub async fn delete_branch(pool: &PgPool, branch_id: &str) -> Result<()> {
+pub async fn delete_branch(pool: &PgPool, branch_id: &str) -> Result<(), DbError> {
     sqlx::query(
         r"
         DELETE FROM branches
@@ -166,7 +166,7 @@ pub async fn create_branch_deletion_token(
     branch_id: String,
     token: String,
     expires_at: chrono::DateTime<chrono::Utc>,
-) -> Result<String> {
+) -> Result<String, DbError> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
 
@@ -195,7 +195,7 @@ pub async fn create_branch_deletion_token(
 pub async fn get_branch_deletion_token(
     pool: &PgPool,
     token: &str,
-) -> Result<Option<(String, String, String)>> {
+) -> Result<Option<(String, String, String)>, DbError> {
     let result = sqlx::query_as::<_, (String, String, String)>(
         r"
         SELECT id, user_id, branch_id
@@ -214,7 +214,7 @@ pub async fn get_branch_deletion_token(
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn mark_branch_deletion_token_used(pool: &PgPool, token_id: &str) -> Result<()> {
+pub async fn mark_branch_deletion_token_used(pool: &PgPool, token_id: &str) -> Result<(), DbError> {
     let now = chrono::Utc::now();
 
     sqlx::query(

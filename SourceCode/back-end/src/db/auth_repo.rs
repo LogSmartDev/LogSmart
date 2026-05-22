@@ -1,5 +1,5 @@
-use anyhow::Result;
 use sqlx::PgPool;
+use crate::error::DbError;
 use uuid::Uuid;
 
 use super::types::*;
@@ -16,7 +16,7 @@ pub async fn create_invitation(
     role: UserRole,
     branch_id: Option<String>,
     expires_at: chrono::DateTime<chrono::Utc>,
-) -> Result<Invitation> {
+) -> Result<Invitation, DbError> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
 
@@ -55,7 +55,7 @@ pub async fn create_invitation(
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_invitation_by_token(pool: &PgPool, token: &str) -> Result<Option<Invitation>> {
+pub async fn get_invitation_by_token(pool: &PgPool, token: &str) -> Result<Option<Invitation>, DbError> {
     let invitation = sqlx::query_as::<_, Invitation>(
         r"
         SELECT id, company_id, email, token, role, branch_id, created_at, expires_at, accepted_at, cancelled_at
@@ -74,7 +74,7 @@ pub async fn get_invitation_by_token(pool: &PgPool, token: &str) -> Result<Optio
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn accept_invitation(pool: &PgPool, invitation_id: &str) -> Result<()> {
+pub async fn accept_invitation(pool: &PgPool, invitation_id: &str) -> Result<(), DbError> {
     let now = chrono::Utc::now();
 
     sqlx::query(
@@ -96,7 +96,7 @@ pub async fn accept_invitation(pool: &PgPool, invitation_id: &str) -> Result<()>
 ///
 /// # Errors
 /// Returns an error if database update fails or invitation not found.
-pub async fn cancel_invitation(pool: &PgPool, invitation_id: &str) -> Result<Invitation> {
+pub async fn cancel_invitation(pool: &PgPool, invitation_id: &str) -> Result<Invitation, DbError> {
     let now = chrono::Utc::now();
 
     let invitation = sqlx::query_as::<_, Invitation>(
@@ -122,7 +122,7 @@ pub async fn cancel_invitation(pool: &PgPool, invitation_id: &str) -> Result<Inv
 pub async fn get_invitation_by_id(
     pool: &PgPool,
     invitation_id: &str,
-) -> Result<Option<Invitation>> {
+) -> Result<Option<Invitation>, DbError> {
     let invitation = sqlx::query_as::<_, Invitation>(
         r"
         SELECT id, company_id, email, token, role, branch_id, created_at, expires_at, accepted_at, cancelled_at
@@ -151,7 +151,7 @@ pub async fn accept_invitation_with_user_creation(
     company_id: &str,
     role: UserRole,
     branch_id: Option<String>,
-) -> Result<UserRecord> {
+) -> Result<UserRecord, DbError> {
     let mut tx = pool.begin().await?;
 
     let user_id = Uuid::new_v4().to_string();
@@ -219,7 +219,7 @@ pub async fn create_passkey(
     credential_id: String,
     public_key: String,
     name: String,
-) -> Result<Passkey> {
+) -> Result<Passkey, DbError> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
 
@@ -254,7 +254,7 @@ pub async fn create_passkey(
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_passkeys_by_user(pool: &PgPool, user_id: &str) -> Result<Vec<Passkey>> {
+pub async fn get_passkeys_by_user(pool: &PgPool, user_id: &str) -> Result<Vec<Passkey>, DbError> {
     let passkeys = sqlx::query_as::<_, Passkey>(
         r"
         SELECT id, user_id, credential_id, public_key, counter, name, created_at, last_used_at
@@ -277,7 +277,7 @@ pub async fn get_passkeys_by_user(pool: &PgPool, user_id: &str) -> Result<Vec<Pa
 pub async fn get_passkey_by_credential_id(
     pool: &PgPool,
     credential_id: &str,
-) -> Result<Option<Passkey>> {
+) -> Result<Option<Passkey>, DbError> {
     let passkey = sqlx::query_as::<_, Passkey>(
         r"
         SELECT id, user_id, credential_id, public_key, counter, name, created_at, last_used_at
@@ -296,7 +296,7 @@ pub async fn get_passkey_by_credential_id(
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn update_passkey_usage(pool: &PgPool, id: &str, counter: i64) -> Result<()> {
+pub async fn update_passkey_usage(pool: &PgPool, id: &str, counter: i64) -> Result<(), DbError> {
     sqlx::query(
         r"
         UPDATE passkeys
@@ -309,7 +309,7 @@ pub async fn update_passkey_usage(pool: &PgPool, id: &str, counter: i64) -> Resu
     .bind(id)
     .execute(pool)
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to update passkey usage: {}", e))?;
+    .map_err(|e| DbError::Internal(format!("Failed to update passkey usage: {}", e)))?;
     Ok(())
 }
 
@@ -317,7 +317,7 @@ pub async fn update_passkey_usage(pool: &PgPool, id: &str, counter: i64) -> Resu
 ///
 /// # Errors
 /// Returns an error if database deletion fails.
-pub async fn delete_passkey(pool: &PgPool, id: &str, user_id: &str) -> Result<()> {
+pub async fn delete_passkey(pool: &PgPool, id: &str, user_id: &str) -> Result<(), DbError> {
     let result = sqlx::query(
         r"
         DELETE FROM passkeys
@@ -330,7 +330,7 @@ pub async fn delete_passkey(pool: &PgPool, id: &str, user_id: &str) -> Result<()
     .await?;
 
     if result.rows_affected() == 0 {
-        return Err(anyhow::anyhow!("Passkey not found"));
+        return Err(DbError::Internal("Passkey not found".to_string()));
     }
 
     Ok(())
@@ -345,7 +345,7 @@ pub async fn create_password_reset_token(
     user_id: String,
     token: String,
     expires_at: chrono::DateTime<chrono::Utc>,
-) -> Result<String> {
+) -> Result<String, DbError> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
 
@@ -373,7 +373,7 @@ pub async fn create_password_reset_token(
 pub async fn get_password_reset_by_token(
     pool: &PgPool,
     token: &str,
-) -> Result<Option<(String, String)>> {
+) -> Result<Option<(String, String)>, DbError> {
     let result = sqlx::query_as::<_, (String, String)>(
         r"
         SELECT id, user_id
@@ -392,7 +392,7 @@ pub async fn get_password_reset_by_token(
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn mark_password_reset_used(pool: &PgPool, reset_id: &str) -> Result<()> {
+pub async fn mark_password_reset_used(pool: &PgPool, reset_id: &str) -> Result<(), DbError> {
     let now = chrono::Utc::now();
 
     sqlx::query(
@@ -421,7 +421,7 @@ pub async fn create_passkey_session(
     user_id: Option<String>,
     challenge: String,
     meta: Option<String>,
-) -> Result<()> {
+) -> Result<(), DbError> {
     let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
 
     sqlx::query(
@@ -446,7 +446,7 @@ pub async fn create_passkey_session(
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-pub async fn get_passkey_session(pool: &PgPool, id: &str) -> Result<Option<PasskeySession>> {
+pub async fn get_passkey_session(pool: &PgPool, id: &str) -> Result<Option<PasskeySession>, DbError> {
     let session = sqlx::query_as::<_, PasskeySession>(
         r"
         SELECT id, session_type, user_id, challenge, meta, created_at, expires_at
@@ -465,7 +465,7 @@ pub async fn get_passkey_session(pool: &PgPool, id: &str) -> Result<Option<Passk
 ///
 /// # Errors
 /// Returns an error if database deletion fails.
-pub async fn delete_passkey_session(pool: &PgPool, id: &str) -> Result<()> {
+pub async fn delete_passkey_session(pool: &PgPool, id: &str) -> Result<(), DbError> {
     sqlx::query(
         r"
         DELETE FROM passkey_sessions
@@ -486,7 +486,7 @@ pub async fn delete_passkey_session(pool: &PgPool, id: &str) -> Result<()> {
 pub async fn get_pending_invitations_by_company_id(
     pool: &PgPool,
     company_id: &str,
-) -> Result<Vec<Invitation>> {
+) -> Result<Vec<Invitation>, DbError> {
     let invitations = sqlx::query_as::<_, Invitation>(
         r"
         SELECT id, company_id, email, token, role, branch_id, created_at, expires_at, accepted_at, cancelled_at

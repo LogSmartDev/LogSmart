@@ -25,23 +25,13 @@ pub async fn generate_layout(
     AnyAuthUser(_claims, _user): AnyAuthUser,
     State(_state): State<AppState>,
     Json(req): Json<LayoutGenerationRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     if req.user_prompt.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "User prompt cannot be empty"
-            })),
-        ));
+        return Err(crate::error::AppError::BadRequest("User prompt cannot be empty".to_string()));
     }
 
     if req.user_prompt.len() > 1000 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "User prompt is too long (max 1000 characters)"
-            })),
-        ));
+        return Err(crate::error::AppError::BadRequest("User prompt is too long (max 1000 characters)".to_string()));
     }
 
     match llm::generate_layout(req).await {
@@ -53,12 +43,8 @@ pub async fn generate_layout(
         )),
         Err(e) => {
             tracing::error!("LLM generation error: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "Failed to generate layout"
-                })),
-            ))
+            Err(crate::error::AppError::Internal("Failed to generate layout"
+                .to_string()))
         }
     }
 }

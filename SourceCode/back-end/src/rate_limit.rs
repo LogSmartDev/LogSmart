@@ -1,7 +1,5 @@
 use axum::{
-    Json,
     extract::{ConnectInfo, Request, State},
-    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -11,7 +9,6 @@ use governor::{
     clock::DefaultClock,
     state::{InMemoryState, direct::NotKeyed},
 };
-use serde_json::json;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -326,14 +323,10 @@ pub async fn rate_limit_middleware(
     if !ip_allowed {
         app_state.metrics.increment_rate_limit_hits();
         tracing::warn!("Rate limit exceeded for IP: {}", ip);
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "error": "Rate limit exceeded for your IP address. Please try again later.",
-                "retry_after": "60"
-            })),
+        return crate::error::AppError::TooManyRequests(
+            "Rate limit exceeded for your IP address. Please try again later.".to_string(),
         )
-            .into_response();
+        .into_response();
     }
 
     if let Some(email_str) = email.as_ref() {
@@ -348,14 +341,10 @@ pub async fn rate_limit_middleware(
         if !email_allowed {
             app_state.metrics.increment_rate_limit_hits();
             tracing::warn!("Rate limit exceeded for email: {}", email_str);
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(json!({
-                    "error": "Rate limit exceeded for this email address. Please try again later.",
-                    "retry_after": if path.contains("/auth/login") { "60" } else { "3600" }
-                })),
+            return crate::error::AppError::TooManyRequests(
+                "Rate limit exceeded for this email address. Please try again later.".to_string(),
             )
-                .into_response();
+            .into_response();
         }
     }
 

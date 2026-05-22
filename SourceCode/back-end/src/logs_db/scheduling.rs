@@ -646,19 +646,17 @@ pub fn get_missed_periods(
                         );
                         break;
                     }
+                } else if let Some(date) =
+                    chrono::NaiveDate::from_ymd_opt(current_year, current_month + 1, 1)
+                {
+                    date.pred_opt().map_or(0, |d| d.day())
                 } else {
-                    if let Some(date) =
-                        chrono::NaiveDate::from_ymd_opt(current_year, current_month + 1, 1)
-                    {
-                        date.pred_opt().map_or(0, |d| d.day())
-                    } else {
-                        tracing::warn!(
-                            "Invalid date calculated for monthly frequency: {}-{}-01",
-                            current_year,
-                            current_month + 1
-                        );
-                        break;
-                    }
+                    tracing::warn!(
+                        "Invalid date calculated for monthly frequency: {}-{}-01",
+                        current_year,
+                        current_month + 1
+                    );
+                    break;
                 };
 
                 let day: u32 = days_in_month.min(u32::from(target_day));

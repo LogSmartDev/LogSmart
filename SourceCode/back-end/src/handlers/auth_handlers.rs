@@ -1,7 +1,7 @@
 use crate::middleware::{AnyAuthUser, AuditRequestContext};
 use crate::services::UserService;
 use crate::utils::{
-    err_bad_request, err_conflict, err_internal, err_not_found, err_unauthorized,
+    err_bad_request, err_internal, err_not_found, err_unauthorized,
     extract_ip_from_headers_and_addr, extract_user_agent,
 };
 use crate::{
@@ -43,7 +43,7 @@ pub async fn verify_token(
     State(state): State<AppState>,
     AuditRequestContext(audit_ctx): AuditRequestContext,
     Json(payload): Json<VerifyTokenRequest>,
-) -> Result<Json<JwtVerifyResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<JwtVerifyResponse>, crate::error::AppError> {
     let jwt_config = JwtManager::get_config();
     let claims = match jwt_config.validate_token(&payload.token) {
         Ok(claims) => claims,
@@ -134,7 +134,7 @@ pub async fn register_company_admin(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(payload): Json<RegisterRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let _timer = crate::metrics::RequestTimer::new();
     state.metrics.increment_total_requests();
 
@@ -148,29 +148,33 @@ pub async fn register_company_admin(
         || payload.company_name.is_empty()
         || payload.company_address.is_empty()
     {
-        return Err(err_bad_request("Missing required fields"));
+        return Err(crate::error::AppError::BadRequest(
+            "Missing required fields".to_string(),
+        ));
     }
 
     if let Err(e) = validate_email(&payload.email) {
-        return Err(err_bad_request(&e.to_string()));
+        return Err(crate::error::AppError::BadRequest(e.to_string()));
     }
 
     if let Err(e) = validate_password_policy(&payload.password) {
-        return Err(err_bad_request(&e.to_string()));
+        return Err(crate::error::AppError::BadRequest(e.to_string()));
     }
 
     if db::get_user_by_email(&state.postgres, &payload.email)
         .await
         .map_err(|e| {
             tracing::error!("Database error checking existing user: {:?}", e);
-            err_internal("Database error")
+            crate::error::AppError::Internal("Database error".to_string())
         })?
         .is_some()
     {
-        return Err(err_conflict("Email already exists"));
+        return Err(crate::error::AppError::Conflict(
+            "Email already exists".to_string(),
+        ));
     }
 
-    let (user_record, token) = services::AuthService::register_admin(
+    let (user_record, token): (db::UserRecord, String) = services::AuthService::register_admin(
         &state.postgres,
         &payload.email,
         &payload.first_name,
@@ -181,12 +185,7 @@ pub async fn register_company_admin(
         Some(ip_address),
         user_agent,
     )
-    .await
-    .map_err(|e| {
-        state.metrics.increment_failed_requests();
-        tracing::error!("Registration failed: {:?}", e);
-        (e.0, Json(e.1))
-    })?;
+    .await?;
 
     state.metrics.increment_registrations();
     state.metrics.increment_successful_requests();
@@ -247,7 +246,7 @@ pub async fn login(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     let _timer = crate::metrics::RequestTimer::new();
     state.metrics.increment_total_requests();
     state.metrics.increment_login_attempts();
@@ -259,7 +258,7 @@ pub async fn login(
         return Err(err_bad_request("Missing email or password"));
     }
 
-    let (token, user) = services::AuthService::verify_credentials(
+    let (token, user): (String, db::UserRecord) = services::AuthService::verify_credentials(
         &state.postgres,
         &payload.email,
         &payload.password,
@@ -267,10 +266,9 @@ pub async fn login(
         user_agent,
     )
     .await
-    .map_err(|e| {
+    .inspect_err(|_e| {
         state.metrics.increment_login_failures();
         state.metrics.increment_failed_requests();
-        (e.0, Json(e.1))
     })?;
 
     state.metrics.increment_login_successes();
@@ -327,7 +325,7 @@ pub async fn login(
 /// Returns an error if the user is not found or if there's a database error.
 pub async fn get_current_user(
     AnyAuthUser(_claims, user): AnyAuthUser,
-) -> Result<Json<UserResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<UserResponse>, crate::error::AppError> {
     Ok(Json(user.into()))
 }
 
@@ -352,7 +350,7 @@ pub async fn update_profile(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     Json(payload): Json<UpdateProfileRequest>,
-) -> Result<Json<UserResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<UserResponse>, crate::error::AppError> {
     if payload.first_name.is_empty() || payload.last_name.is_empty() {
         return Err(err_bad_request("First name and last name cannot be empty"));
     }
@@ -365,7 +363,7 @@ pub async fn update_profile(
     .await
     .map_err(|e| {
         tracing::error!("Failed to update profile: {:?}", e);
-        (e.0, Json(e.1))
+        e
     })?;
 
     // Invalidate cache
@@ -402,7 +400,7 @@ pub async fn request_password_reset(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(payload): Json<RequestPasswordResetRequest>,
-) -> Result<Json<PasswordResetResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<PasswordResetResponse>, crate::error::AppError> {
     let _timer = crate::metrics::RequestTimer::new();
     state.metrics.increment_total_requests();
 
@@ -424,9 +422,8 @@ pub async fn request_password_reset(
         user_agent,
     )
     .await
-    .map_err(|(status, err)| {
+    .inspect_err(|_e| {
         state.metrics.increment_failed_requests();
-        (status, Json(err))
     })?;
 
     state.metrics.increment_successful_requests();
@@ -456,7 +453,7 @@ pub async fn request_password_reset(
 pub async fn reset_password(
     State(state): State<AppState>,
     Json(payload): Json<ResetPasswordRequest>,
-) -> Result<Json<PasswordResetResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<PasswordResetResponse>, crate::error::AppError> {
     let user_id = services::AuthService::reset_password(
         &state.postgres,
         &payload.token,
@@ -465,7 +462,7 @@ pub async fn reset_password(
     .await
     .map_err(|e| {
         tracing::error!("Password reset failed: {:?}", e);
-        (e.0, Json(e.1))
+        e
     })?;
 
     // Invalidate cache

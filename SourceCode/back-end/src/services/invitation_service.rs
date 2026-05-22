@@ -3,9 +3,7 @@ use crate::{
     db, email,
     utils::{AuditContext, AuditLogger},
 };
-use axum::http::StatusCode;
 use chrono::Duration;
-use serde_json::json;
 use sqlx::PgPool;
 
 #[cfg(test)]
@@ -31,41 +29,26 @@ impl InvitationService {
         branch_id: Option<String>,
         ip_address: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<(String, chrono::DateTime<chrono::Utc>), (StatusCode, serde_json::Value)> {
+    ) -> Result<(String, chrono::DateTime<chrono::Utc>), crate::error::AppError> {
         if let Some(_existing_user) = db::get_user_by_email(db_pool, &recipient_email)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to check existing user: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error" .to_string())
             })?
         {
-            return Err((
-                StatusCode::CONFLICT,
-                json!({ "error": "User already registered" }),
-            ));
+            return Err(crate::error::AppError::Conflict("User already registered" .to_string()));
         }
 
-        let company_id = admin.company_id.as_ref().ok_or((
-            StatusCode::FORBIDDEN,
-            json!({ "error": "Admin user is not associated with a company" }),
-        ))?;
+        let company_id = admin.company_id.as_ref().ok_or(crate::error::AppError::Forbidden("Admin user is not associated with a company" .to_string()))?;
 
         let company_name = db::get_company_by_id(db_pool, company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to fetch company name: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error" .to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Company not found" }),
-            ))?
+            .ok_or(crate::error::AppError::NotFound("Company not found" .to_string()))?
             .name;
 
         let token = generate_uuid6_token();
@@ -87,16 +70,10 @@ impl InvitationService {
                     "Duplicate invitation attempt for email: {}",
                     recipient_email
                 );
-                (
-                    StatusCode::CONFLICT,
-                    json!({ "error": "User already invited" }),
-                )
+                crate::error::AppError::Conflict("User already invited" .to_string())
             } else {
                 tracing::error!("Failed to create invitation: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to create invitation" }),
-                )
+                crate::error::AppError::Internal("Failed to create invitation" .to_string())
             }
         })?;
 
@@ -109,10 +86,7 @@ impl InvitationService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to send invitation email: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to send invitation email" }),
-                )
+                crate::error::AppError::Internal("Failed to send invitation email" .to_string())
             })?;
 
         AuditLogger::log_invitation_sent(
@@ -143,30 +117,21 @@ impl InvitationService {
         token: &str,
     ) -> Result<
         (db::Invitation, chrono::DateTime<chrono::FixedOffset>),
-        (StatusCode, serde_json::Value),
+        crate::error::AppError,
     > {
         let invitation = db::get_invitation_by_token(db_pool, token)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching invitation by token: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error" .to_string())
             })?
-            .ok_or((
-                StatusCode::UNAUTHORIZED,
-                json!({ "error": "Invalid or expired invitation" }),
-            ))?;
+            .ok_or(crate::error::AppError::Unauthorized("Invalid or expired invitation" .to_string()))?;
 
         let now = chrono::Utc::now();
         let expires_at = invitation.expires_at.fixed_offset();
 
         if now > expires_at {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({ "error": "Invitation has expired" }),
-            ));
+            return Err(crate::error::AppError::Unauthorized("Invitation has expired" .to_string()));
         }
 
         Ok((invitation, expires_at))
@@ -179,34 +144,22 @@ impl InvitationService {
     pub async fn get_invitation_details(
         db_pool: &PgPool,
         token: &str,
-    ) -> Result<(String, chrono::DateTime<chrono::Utc>), (StatusCode, serde_json::Value)> {
+    ) -> Result<(String, chrono::DateTime<chrono::Utc>), crate::error::AppError> {
         let invitation = db::get_invitation_by_token(db_pool, token)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching invitation by token: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error" .to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Invitation not found" }),
-            ))?;
+            .ok_or(crate::error::AppError::NotFound("Invitation not found" .to_string()))?;
 
         let company = db::get_company_by_id(db_pool, &invitation.company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching company name: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error" .to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Company not found" }),
-            ))?;
+            .ok_or(crate::error::AppError::NotFound("Company not found" .to_string()))?;
 
         Ok((company.name, invitation.expires_at))
     }
@@ -218,7 +171,7 @@ impl InvitationService {
     pub async fn mark_invitation_accepted(
         db_pool: &PgPool,
         invitation_id: &str,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), crate::error::AppError> {
         let accept_time = chrono::Utc::now().to_rfc3339();
         sqlx::query(
             r"
@@ -233,10 +186,7 @@ impl InvitationService {
         .await
         .map_err(|e| {
             tracing::error!("Failed to mark invitation as accepted: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to accept invitation" }),
-            )
+            crate::error::AppError::Internal("Failed to accept invitation" .to_string())
         })?;
 
         Ok(())
@@ -249,15 +199,12 @@ impl InvitationService {
     pub async fn get_pending_invitations(
         db_pool: &PgPool,
         company_id: &str,
-    ) -> Result<Vec<db::Invitation>, (StatusCode, serde_json::Value)> {
+    ) -> Result<Vec<db::Invitation>, crate::error::AppError> {
         db::get_pending_invitations_by_company_id(db_pool, company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching pending invitations: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error" .to_string())
             })
     }
 
@@ -270,50 +217,32 @@ impl InvitationService {
         calling_user: &db::UserRecord,
         invitation_id: &str,
         context: AuditContext,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), crate::error::AppError> {
         let invitation = db::get_invitation_by_id(db_pool, invitation_id)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching invitation: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error" .to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Invitation not found" }),
-            ))?;
+            .ok_or(crate::error::AppError::NotFound("Invitation not found" .to_string()))?;
 
         if calling_user.company_id.as_ref() != Some(&invitation.company_id) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "Cannot cancel invitations from other companies" }),
-            ));
+            return Err(crate::error::AppError::Forbidden("Cannot cancel invitations from other companies" .to_string()));
         }
 
         if invitation.accepted_at.is_some() {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                json!({ "error": "Cannot cancel an accepted invitation" }),
-            ));
+            return Err(crate::error::AppError::BadRequest("Cannot cancel an accepted invitation" .to_string()));
         }
 
         if invitation.cancelled_at.is_some() {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                json!({ "error": "Invitation already cancelled" }),
-            ));
+            return Err(crate::error::AppError::BadRequest("Invitation already cancelled" .to_string()));
         }
 
         let cancelled_invitation = db::cancel_invitation(db_pool, invitation_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to cancel invitation: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to cancel invitation" }),
-                )
+                crate::error::AppError::Internal("Failed to cancel invitation" .to_string())
             })?;
 
         email::send_invitation_cancelled_email(&cancelled_invitation.email)

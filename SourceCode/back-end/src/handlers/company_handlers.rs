@@ -3,7 +3,6 @@ use crate::{
     dto::{CompanyResponse, ErrorResponse, ExportResponse, UpdateCompanyRequest},
     exports_db, images_db, logs_db,
     middleware::{AuditRequestContext, ManageCompanyUser},
-    services::company_service::{CompanyService, CompanyServiceError},
     utils::{AuditLogger, err_bad_request, err_forbidden, err_internal, err_not_found},
 };
 use axum::{
@@ -40,28 +39,18 @@ pub async fn upload_company_logo(
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
     body: Bytes,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl axum::response::IntoResponse, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
-        return Err(err_forbidden("You can only manage your own company's logo"));
+        return Err(crate::error::AppError::Forbidden("You can only manage your own company's logo".to_string()));
     }
 
-    let file_id = CompanyService::upload_company_logo(
+    let file_id = crate::services::CompanyService::upload_company_logo(
         &state.postgres,
         &state.mongodb,
         &company_id,
         body.to_vec(),
     )
-    .await
-    .map_err(|e| match e {
-        CompanyServiceError::FileTooLarge
-        | CompanyServiceError::NoFileProvided
-        | CompanyServiceError::NotAnImage => err_bad_request(&e.to_string()),
-        CompanyServiceError::CompanyNotFound => err_not_found(&e.to_string()),
-        CompanyServiceError::Internal(msg) => {
-            tracing::error!("Failed to upload company logo: {msg}");
-            err_internal("Failed to upload logo")
-        }
-    })?;
+    .await?;
 
     AuditLogger::log_admin_action(
         &state.postgres,
@@ -97,7 +86,7 @@ pub async fn get_company_logo(
         [(header::HeaderName, header::HeaderValue); 1],
         Vec<u8>,
     ),
-    (StatusCode, Json<serde_json::Value>),
+    crate::error::AppError,
 > {
     if !user.is_logsmart_admin() && user.company_id.as_ref() != Some(&company_id) {
         return Err(err_forbidden("You can only view your own company's logo"));
@@ -151,7 +140,7 @@ pub async fn delete_company_logo(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
         return Err(err_forbidden("You can only manage your own company's logo"));
     }
@@ -207,7 +196,7 @@ pub async fn get_company(
     ManageCompanyUser(_claims, user): ManageCompanyUser,
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
-) -> Result<Json<CompanyResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<CompanyResponse>, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
         return Err(err_forbidden("You can only view your own company"));
     }
@@ -242,7 +231,7 @@ pub async fn update_company(
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
     Json(payload): Json<UpdateCompanyRequest>,
-) -> Result<Json<CompanyResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<CompanyResponse>, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
         return Err(err_forbidden("You can only update your own company"));
     }
@@ -308,7 +297,7 @@ pub async fn export_company_data(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
-) -> Result<Json<ExportResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<ExportResponse>, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
         return Err(err_forbidden("You can only export your own company data"));
     }
@@ -322,12 +311,7 @@ pub async fn export_company_data(
         .ok_or_else(|| err_not_found("Company not found"))?;
 
     if !state.rate_limit.check_export(&company_id) {
-        return Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "error": "You can only export once per week. Please try again later.",
-            })),
-        ));
+        return Err(crate::error::AppError::TooManyRequests("You can only export once per week. Please try again later.".to_string()));
     }
 
     let company_email = user.email.clone();
@@ -445,7 +429,7 @@ pub async fn download_export(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     axum::extract::Path((company_id, filename)): axum::extract::Path<(String, String)>,
-) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<axum::response::Response, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
         return Err(err_forbidden(
             "You can only download your own company exports",
@@ -518,7 +502,7 @@ pub async fn delete_company(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
         return Err(err_forbidden("You can only delete your own company"));
     }
@@ -609,7 +593,7 @@ pub async fn validate_company_deletion_token(
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
     axum::extract::Query(token): axum::extract::Query<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     let token = token.get("token").and_then(|t| t.as_str()).unwrap_or("");
 
     if token.is_empty() {
@@ -686,7 +670,7 @@ pub async fn confirm_company_deletion(
     State(state): State<AppState>,
     axum::extract::Path(company_id): axum::extract::Path<String>,
     Json(payload): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     let token = payload.get("token").and_then(|t| t.as_str()).unwrap_or("");
 
     if token.is_empty() {

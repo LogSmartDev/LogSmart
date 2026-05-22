@@ -1,6 +1,5 @@
 use crate::db;
 use crate::try_db;
-use crate::utils::{ServiceError, svc_err_bad_request, svc_err_forbidden, svc_err_not_found};
 use sqlx::PgPool;
 
 #[cfg(test)]
@@ -21,12 +20,12 @@ impl UserService {
     pub async fn get_user_by_email(
         db_pool: &PgPool,
         email: &str,
-    ) -> Result<db::UserRecord, ServiceError> {
+    ) -> Result<db::UserRecord, crate::error::AppError> {
         let user = try_db!(
             db::get_user_by_email(db_pool, email),
             "fetching user by email"
         )?
-        .ok_or(svc_err_not_found("User not found"))?;
+        .ok_or(crate::error::AppError::NotFound("User not found".to_string()))?;
         Ok(user)
     }
 
@@ -37,9 +36,9 @@ impl UserService {
     pub async fn get_user_by_id(
         db_pool: &PgPool,
         user_id: &str,
-    ) -> Result<db::UserRecord, ServiceError> {
+    ) -> Result<db::UserRecord, crate::error::AppError> {
         let user = try_db!(db::get_user_by_id(db_pool, user_id), "fetching user by id")?
-            .ok_or(svc_err_not_found("User not found"))?;
+            .ok_or(crate::error::AppError::NotFound("User not found".to_string()))?;
         Ok(user)
     }
 
@@ -52,7 +51,7 @@ impl UserService {
         user_id: &str,
         first_name: String,
         last_name: String,
-    ) -> Result<db::UserRecord, ServiceError> {
+    ) -> Result<db::UserRecord, crate::error::AppError> {
         try_db!(
             db::update_user_profile(db_pool, user_id, first_name, last_name),
             "updating user profile"
@@ -66,7 +65,7 @@ impl UserService {
     pub async fn get_company_members(
         db_pool: &PgPool,
         company_id: &str,
-    ) -> Result<Vec<db::UserRecord>, ServiceError> {
+    ) -> Result<Vec<db::UserRecord>, crate::error::AppError> {
         try_db!(
             db::get_users_by_company_id(db_pool, company_id),
             "fetching company members"
@@ -80,12 +79,12 @@ impl UserService {
     pub async fn get_user_company_id(
         db_pool: &PgPool,
         user_id: &str,
-    ) -> Result<String, ServiceError> {
+    ) -> Result<String, crate::error::AppError> {
         let company_id = try_db!(
             db::get_user_company_id(db_pool, user_id),
             "fetching user company ID"
         )?
-        .ok_or(svc_err_forbidden("User is not associated with a company"))?;
+        .ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
         Ok(company_id)
     }
 
@@ -102,50 +101,36 @@ impl UserService {
         role: db::UserRole,
         branch_id: Option<String>,
         profile_picture_id: Option<String>,
-    ) -> Result<db::UserRecord, ServiceError> {
+    ) -> Result<db::UserRecord, crate::error::AppError> {
         if !admin_user.can_manage_branch() || admin_user.is_readonly_hq() {
-            return Err(svc_err_forbidden(
-                "Only managers can update member profiles",
-            ));
+            return Err(crate::error::AppError::Forbidden("Only managers can update member profiles".to_string()));
         }
 
         let target_user = Self::get_user_by_email(db_pool, target_email).await?;
 
         if admin_user.is_company_manager() && admin_user.company_id != target_user.company_id {
-            return Err(svc_err_forbidden(
-                "Cannot update users from other companies",
-            ));
+            return Err(crate::error::AppError::Forbidden("Cannot update users from other companies".to_string()));
         }
 
         if admin_user.is_branch_manager() {
             if admin_user.branch_id != target_user.branch_id {
-                return Err(svc_err_forbidden(
-                    "Branch managers can only manage users in their branch",
-                ));
+                return Err(crate::error::AppError::Forbidden("Branch managers can only manage users in their branch".to_string()));
             }
             if branch_id != admin_user.branch_id {
-                return Err(svc_err_forbidden(
-                    "Branch managers can only assign users to their own branch",
-                ));
+                return Err(crate::error::AppError::Forbidden("Branch managers can only assign users to their own branch".to_string()));
             }
             if role != db::UserRole::Staff {
-                return Err(svc_err_forbidden(
-                    "Branch managers can only manage staff members",
-                ));
+                return Err(crate::error::AppError::Forbidden("Branch managers can only manage staff members".to_string()));
             }
         }
 
         if target_user.is_logsmart_admin() && !admin_user.is_logsmart_admin() {
-            return Err(svc_err_forbidden(
-                "Cannot modify LogSmart internal admin users",
-            ));
+            return Err(crate::error::AppError::Forbidden("Cannot modify LogSmart internal admin users".to_string()));
         }
 
         // Only LogSmart admins can assign the LogSmart admin role
         if role == db::UserRole::LogSmartAdmin && !admin_user.is_logsmart_admin() {
-            return Err(svc_err_forbidden(
-                "Only LogSmart admins can assign the LogSmart admin role",
-            ));
+            return Err(crate::error::AppError::Forbidden("Only LogSmart admins can assign the LogSmart admin role".to_string()));
         }
 
         try_db!(
@@ -170,29 +155,23 @@ impl UserService {
         db_pool: &PgPool,
         admin_user: &db::UserRecord,
         target_email: &str,
-    ) -> Result<String, ServiceError> {
+    ) -> Result<String, crate::error::AppError> {
         let target_user = Self::get_user_by_email(db_pool, target_email).await?;
 
         if admin_user.is_company_manager() && admin_user.company_id != target_user.company_id {
-            return Err(svc_err_forbidden(
-                "Cannot delete users from other companies",
-            ));
+            return Err(crate::error::AppError::Forbidden("Cannot delete users from other companies".to_string()));
         }
 
         if admin_user.is_branch_manager() && admin_user.branch_id != target_user.branch_id {
-            return Err(svc_err_forbidden(
-                "Branch managers can only delete users in their branch",
-            ));
+            return Err(crate::error::AppError::Forbidden("Branch managers can only delete users in their branch".to_string()));
         }
 
         if target_user.is_logsmart_admin() && !admin_user.is_logsmart_admin() {
-            return Err(svc_err_forbidden(
-                "Cannot delete LogSmart internal admin users",
-            ));
+            return Err(crate::error::AppError::Forbidden("Cannot delete LogSmart internal admin users".to_string()));
         }
 
         if target_user.email == admin_user.email {
-            return Err(svc_err_bad_request("Cannot delete your own account"));
+            return Err(crate::error::AppError::BadRequest("Cannot delete your own account".to_string()));
         }
 
         try_db!(
