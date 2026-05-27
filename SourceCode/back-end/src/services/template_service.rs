@@ -1,10 +1,9 @@
 use crate::{
     AppState,
     db::{UserRecord, UserRole},
+    error::AppError,
     logs_db, utils,
 };
-use axum::http::StatusCode;
-use serde_json::json;
 
 #[cfg(test)]
 mod template_service_tests {
@@ -41,9 +40,10 @@ mod template_service_tests {
 
         let result = TemplateService::validate_template_layout(&layout);
         assert!(result.is_err());
-        let (status, err) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(err["error"].to_string().contains("Invalid input type"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid input type"));
     }
 
     #[test]
@@ -54,13 +54,10 @@ mod template_service_tests {
 
         let result = TemplateService::validate_template_layout(&layout);
         assert!(result.is_err());
-        let (status, err) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
-            err["error"]
-                .to_string()
-                .contains("min_length must be non-negative")
-        );
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("min_length must be non-negative"));
     }
 
     #[test]
@@ -71,13 +68,10 @@ mod template_service_tests {
 
         let result = TemplateService::validate_template_layout(&layout);
         assert!(result.is_err());
-        let (status, err) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
-            err["error"]
-                .to_string()
-                .contains("max_length must be non-negative")
-        );
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("max_length must be non-negative"));
     }
 
     #[test]
@@ -89,13 +83,10 @@ mod template_service_tests {
 
         let result = TemplateService::validate_template_layout(&layout);
         assert!(result.is_err());
-        let (status, err) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
-            err["error"]
-                .to_string()
-                .contains("min_length cannot be greater than max_length")
-        );
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("min_length cannot be greater than max_length"));
     }
 
     #[test]
@@ -106,9 +97,10 @@ mod template_service_tests {
 
         let result = TemplateService::validate_template_layout(&layout);
         assert!(result.is_err());
-        let (status, err) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(err["error"].to_string().contains("Invalid color value"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid color value"));
     }
 
     #[test]
@@ -176,9 +168,10 @@ mod template_service_tests {
 
         let result = TemplateService::validate_template_layout(&layout);
         assert!(result.is_err());
-        let (_, err) = result.unwrap_err();
+        let err = result.unwrap_err();
+        let msg = err.to_string();
         // Error should mention field 1 (0-indexed)
-        assert!(err["error"].to_string().contains("Field 1"));
+        assert!(msg.contains("Field 1"));
     }
 
     #[tokio::test]
@@ -193,58 +186,49 @@ impl TemplateService {
     /// Validates that all template fields contain safe values and valid constraints.
     /// Checks for CSS injection, input types, and length constraints.
     /// Returns an error if any field contains invalid data.
-    fn validate_template_layout(
-        template_layout: &logs_db::TemplateLayout,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    fn validate_template_layout(template_layout: &logs_db::TemplateLayout) -> Result<(), AppError> {
         for (field_index, field) in template_layout.iter().enumerate() {
             // Validate color field if present
             if let Some(color) = &field.props.color
                 && !utils::is_valid_css_color(color)
             {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    json!({ "error": format!("Field {}: Invalid color value. Colors must be valid CSS values (hex, rgb/rgba, or named colors).", field_index) }),
-                ));
+                return Err(AppError::BadRequest(format!(
+                    "Field {field_index}: Invalid color value. Colors must be valid CSS values (hex, rgb/rgba, or named colors)."
+                )));
             }
 
             // Validate font_family field if present
             if let Some(font_family) = &field.props.font_family
                 && !utils::is_valid_font_family(font_family)
             {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    json!({ "error": format!("Field {}: Invalid font family value.", field_index) }),
-                ));
+                return Err(AppError::BadRequest(format!(
+                    "Field {field_index}: Invalid font family value."
+                )));
             }
 
             // Validate text_decoration field if present
             if let Some(text_decoration) = &field.props.text_decoration
                 && !utils::is_valid_text_decoration(text_decoration)
             {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    json!({ "error": format!("Field {}: Invalid text decoration value.", field_index) }),
-                ));
+                return Err(AppError::BadRequest(format!(
+                    "Field {field_index}: Invalid text decoration value."
+                )));
             }
 
             // Validate input_type if present
             if let Some(input_type) = &field.props.input_type
                 && !utils::is_valid_input_type(input_type)
             {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    json!({ "error": format!("Field {}: Invalid input type '{}'. Must be one of: text, int, float.", field_index, input_type) }),
-                ));
+                return Err(AppError::BadRequest(format!(
+                    "Field {field_index}: Invalid input type '{input_type}'. Must be one of: text, int, float."
+                )));
             }
 
             // Validate length constraints (min_length and max_length)
             if let Err(e) =
                 utils::validate_length_constraints(field.props.min_length, field.props.max_length)
             {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    json!({ "error": format!("Field {}: {}", field_index, e) }),
-                ));
+                return Err(AppError::BadRequest(format!("Field {field_index}: {e}")));
             }
         }
         Ok(())
@@ -261,7 +245,7 @@ impl TemplateService {
         schedule: logs_db::Schedule,
         user_id: &str,
         branch_id: Option<String>,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         // Validate template layout for malicious content
         Self::validate_template_layout(&template_layout)?;
 
@@ -270,16 +254,12 @@ impl TemplateService {
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to check for existing template: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({ "error": "Database error" }),
-                    )
+                    AppError::Internal("Database error".to_string())
                 })?;
 
         if existing_template.is_some() {
-            return Err((
-                StatusCode::CONFLICT,
-                json!({ "error": "A template with this name already exists for your company" }),
+            return Err(AppError::Conflict(
+                "A template with this name already exists for your company".to_string(),
             ));
         }
 
@@ -292,10 +272,7 @@ impl TemplateService {
             updated_at: chrono::Utc::now(),
             created_by: mongodb::bson::Uuid::parse_str(user_id).map_err(|e| {
                 tracing::error!("Failed to parse user ID as UUID: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Server error" }),
-                )
+                AppError::Internal("Server error".to_string())
             })?,
             schedule,
             version: 1,
@@ -306,10 +283,7 @@ impl TemplateService {
             .await
             .map_err(|e: anyhow::Error| {
                 tracing::error!("Failed to add template: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to add template" }),
-                )
+                AppError::Internal("Failed to add template".to_string())
             })?;
 
         Ok(())
@@ -331,16 +305,13 @@ impl TemplateService {
             Option<String>,
             Option<String>,
         ),
-        (StatusCode, serde_json::Value),
+        AppError,
     > {
         let template = logs_db::get_template_by_name(&state.mongodb, template_name, company_id)
             .await
             .map_err(|e: anyhow::Error| {
                 tracing::error!("Failed to get template: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get template" }),
-                )
+                AppError::Internal("Failed to get template".to_string())
             })?;
 
         match template {
@@ -351,10 +322,7 @@ impl TemplateService {
                 t.version_name,
                 t.branch_id,
             )),
-            None => Err((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Template not found" }),
-            )),
+            None => Err(AppError::NotFound("Template not found".to_string())),
         }
     }
 
@@ -374,17 +342,14 @@ impl TemplateService {
             String,
             logs_db::Schedule,
         )>,
-        (StatusCode, serde_json::Value),
+        AppError,
     > {
         let templates =
             logs_db::get_templates_by_company_and_branch(&state.mongodb, company_id, branch_id)
                 .await
                 .map_err(|e: anyhow::Error| {
                     tracing::error!("Failed to get templates: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({ "error": "Failed to get templates" }),
-                    )
+                    AppError::Internal("Failed to get templates".to_string())
                 })?;
 
         let result = templates
@@ -415,15 +380,14 @@ impl TemplateService {
         user: &UserRecord,
         version_name: Option<String>,
         target_branch_id: Option<Option<&str>>,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         // Validate template layout for malicious content if provided
         if let Some(layout) = template_layout {
             Self::validate_template_layout(layout)?;
         }
 
-        let company_id = user.company_id.as_ref().ok_or((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "User record missing company ID" }),
+        let company_id = user.company_id.as_ref().ok_or(AppError::Internal(
+            "User record missing company ID".to_string(),
         ))?;
 
         // 1. Fetch current template state
@@ -432,28 +396,20 @@ impl TemplateService {
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch template for versioning: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({ "error": "Database error" }),
-                    )
+                    AppError::Internal("Database error".to_string())
                 })?
-                .ok_or((
-                    StatusCode::NOT_FOUND,
-                    json!({ "error": "Template not found" }),
-                ))?;
+                .ok_or(AppError::NotFound("Template not found".to_string()))?;
 
         // Authorization check
         if user.is_branch_manager() {
             if current_template.is_company_wide() {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    json!({ "error": "Branch managers cannot update company-wide templates" }),
+                return Err(AppError::Forbidden(
+                    "Branch managers cannot update company-wide templates".to_string(),
                 ));
             }
             if current_template.branch_id.as_deref() != user.branch_id.as_deref() {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    json!({ "error": "Branch managers can only update templates for their own branch" }),
+                return Err(AppError::Forbidden(
+                    "Branch managers can only update templates for their own branch".to_string(),
                 ));
             }
         }
@@ -482,10 +438,7 @@ impl TemplateService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to archive template version: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to create version snapshot" }),
-                )
+                AppError::Internal("Failed to create version snapshot".to_string())
             })?;
 
         // 3. Update template (this increments version in DB)
@@ -501,10 +454,7 @@ impl TemplateService {
         .await
         .map_err(|e: anyhow::Error| {
             tracing::error!("Failed to update template: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to update template" }),
-            )
+            AppError::Internal("Failed to update template".to_string())
         })?;
         Ok(())
     }
@@ -517,20 +467,16 @@ impl TemplateService {
         state: &AppState,
         template_name: &str,
         user: &UserRecord,
-    ) -> Result<Vec<logs_db::TemplateVersionDocument>, (StatusCode, serde_json::Value)> {
-        let company_id = user.company_id.as_ref().ok_or((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "User record missing company ID" }),
+    ) -> Result<Vec<logs_db::TemplateVersionDocument>, AppError> {
+        let company_id = user.company_id.as_ref().ok_or(AppError::Internal(
+            "User record missing company ID".to_string(),
         ))?;
         let template_versions =
             logs_db::get_template_versions(&state.mongodb, company_id, template_name)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch template versions: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({ "error": "Database error" }),
-                    )
+                    AppError::Internal("Database error".to_string())
                 });
         let last_version = template_versions
             .as_ref()
@@ -539,9 +485,8 @@ impl TemplateService {
         if user.role == UserRole::BranchManager
             && (last_version.is_some_and(|t| t.branch_id.as_deref() != user.branch_id.as_deref()))
         {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "Unauthorized to view versions of this template" }),
+            return Err(AppError::Forbidden(
+                "Unauthorized to view versions of this template".to_string(),
             ));
         }
         template_versions
@@ -557,22 +502,16 @@ impl TemplateService {
         template_name: &str,
         version: u16,
         user: &UserRecord,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         // 1. Fetch target version
         let target_version =
             logs_db::get_template_version(&state.mongodb, company_id, template_name, version)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to fetch target version: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({ "error": "Database error" }),
-                    )
+                    AppError::Internal("Database error".to_string())
                 })?
-                .ok_or((
-                    StatusCode::NOT_FOUND,
-                    json!({ "error": "Version not found" }),
-                ))?;
+                .ok_or(AppError::NotFound("Version not found".to_string()))?;
 
         // 2. Call update_template with the target data
         // This handles archiving the CURRENT state before overwriting it with the OLD state
@@ -599,27 +538,20 @@ impl TemplateService {
         new_name: &str,
         user_branch_id: Option<&str>,
         user_role: &UserRole,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         let template = logs_db::get_template_by_name(&state.mongodb, old_name, company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to fetch template for rename: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                AppError::Internal("Database error".to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Template not found" }),
-            ))?;
+            .ok_or(AppError::NotFound("Template not found".to_string()))?;
 
         if *user_role == UserRole::BranchManager
             && (template.is_company_wide() || template.branch_id.as_deref() != user_branch_id)
         {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "Unauthorized to rename this template" }),
+            return Err(AppError::Forbidden(
+                "Unauthorized to rename this template".to_string(),
             ));
         }
 
@@ -627,10 +559,7 @@ impl TemplateService {
             .await
             .map_err(|e: anyhow::Error| {
                 tracing::error!("Failed to rename template: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to rename template" }),
-                )
+                AppError::Internal("Failed to rename template".to_string())
             })?;
         Ok(())
     }
@@ -645,27 +574,20 @@ impl TemplateService {
         template_name: &str,
         user_branch_id: Option<&str>,
         user_role: &UserRole,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         let template = logs_db::get_template_by_name(&state.mongodb, template_name, company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to fetch template for delete: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                AppError::Internal("Database error".to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Template not found" }),
-            ))?;
+            .ok_or(AppError::NotFound("Template not found".to_string()))?;
 
         if *user_role == UserRole::BranchManager
             && (template.is_company_wide() || template.branch_id.as_deref() != user_branch_id)
         {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "Unauthorized to delete this template" }),
+            return Err(AppError::Forbidden(
+                "Unauthorized to delete this template".to_string(),
             ));
         }
 
@@ -673,10 +595,7 @@ impl TemplateService {
             .await
             .map_err(|e: anyhow::Error| {
                 tracing::error!("Failed to delete template: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to delete template" }),
-                )
+                AppError::Internal("Failed to delete template".to_string())
             })?;
         Ok(())
     }

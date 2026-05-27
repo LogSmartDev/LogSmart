@@ -4,7 +4,6 @@ use crate::{
     utils::{AuditContext, AuditLogger},
 };
 use anyhow::Result;
-use axum::http::StatusCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -25,7 +24,6 @@ use openidconnect::{
     },
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sqlx::PgPool;
 
 #[derive(Clone)]
@@ -115,7 +113,7 @@ impl GoogleOAuthClient {
         &self,
         http_client: &openidconnect::reqwest::Client,
         force_refresh: bool,
-    ) -> Result<CoreJsonWebKeySet, (StatusCode, serde_json::Value)> {
+    ) -> Result<CoreJsonWebKeySet, crate::error::AppError> {
         const CACHE_TTL: Duration = Duration::from_secs(300);
 
         if !force_refresh {
@@ -133,10 +131,7 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to fetch JWKs: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to fetch signing keys" }),
-                )
+                crate::error::AppError::Internal("Failed to fetch signing keys".to_string())
             })?;
 
         {
@@ -155,7 +150,7 @@ impl GoogleOAuthClient {
         &self,
         code: String,
         nonce: String,
-    ) -> Result<(OAuthUserInfo, CoreIdTokenClaims), (StatusCode, serde_json::Value)> {
+    ) -> Result<(OAuthUserInfo, CoreIdTokenClaims), crate::error::AppError> {
         let http_client = openidconnect::reqwest::Client::new();
 
         let client = CoreClient::from_provider_metadata(
@@ -169,10 +164,7 @@ impl GoogleOAuthClient {
             .exchange_code(AuthorizationCode::new(code))
             .map_err(|e| {
                 tracing::error!("Invalid authorization code: {:?}", e);
-                (
-                    StatusCode::BAD_REQUEST,
-                    json!({ "error": "Invalid authorization code" }),
-                )
+                crate::error::AppError::BadRequest("Invalid authorization code".to_string())
             })?;
 
         let token_response = token_request
@@ -180,18 +172,14 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to exchange OAuth code: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to exchange authorization code" }),
+                crate::error::AppError::Internal(
+                    "Failed to exchange authorization code".to_string(),
                 )
             })?;
 
         let id_token = token_response.id_token().ok_or_else(|| {
             tracing::error!("No ID token in OAuth response");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "No ID token received from Google" }),
-            )
+            crate::error::AppError::Internal("No ID token received from Google".to_string())
         })?;
 
         let nonce = Nonce::new(nonce);
@@ -214,17 +202,13 @@ impl GoogleOAuthClient {
                 );
                 id_token.claims(&refreshed_verifier, &nonce).map_err(|e| {
                     tracing::error!("Failed to verify ID token after JWK refresh: {:?}", e);
-                    (
-                        StatusCode::UNAUTHORIZED,
-                        json!({ "error": "Failed to verify ID token" }),
-                    )
+                    crate::error::AppError::Unauthorized("Failed to verify ID token".to_string())
                 })?
             }
             Err(e) => {
                 tracing::error!("Failed to verify ID token: {:?}", e);
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    json!({ "error": "Failed to verify ID token" }),
+                return Err(crate::error::AppError::Unauthorized(
+                    "Failed to verify ID token".to_string(),
                 ));
             }
         };
@@ -234,10 +218,7 @@ impl GoogleOAuthClient {
             .map(|e| e.as_str().to_string())
             .ok_or_else(|| {
                 tracing::error!("No email in ID token claims");
-                (
-                    StatusCode::BAD_REQUEST,
-                    json!({ "error": "Email not provided by Google" }),
-                )
+                crate::error::AppError::BadRequest("Email not provided by Google".to_string())
             })?;
 
         let given_name = claims
@@ -279,7 +260,7 @@ impl GoogleOAuthClient {
         ip_address: Option<String>,
         user_agent: Option<String>,
         allow_new_account: bool,
-    ) -> Result<db::UserRecord, (StatusCode, serde_json::Value)> {
+    ) -> Result<db::UserRecord, crate::error::AppError> {
         tracing::info!(
             "OAuth get_or_create_user: looking for oauth_subject={}, google_email={}",
             user_info.sub,
@@ -290,10 +271,7 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Database error checking OAuth user: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error".to_string())
             })?
         {
             tracing::info!(
@@ -320,9 +298,8 @@ impl GoogleOAuthClient {
             .await;
 
             if existing_user.company_deleted_at.is_some() {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    json!({"error": "Your company has been deleted. Please contact support."}),
+                return Err(crate::error::AppError::Unauthorized(
+                    "Your company has been deleted. Please contact support.".to_string(),
                 ));
             }
             return Ok(existing_user);
@@ -338,29 +315,14 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Database error checking email: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error".to_string())
             })?
         {
-            return Err((
-                StatusCode::CONFLICT,
-                json!({
-                    "error": "An account with this email already exists. Please login with your password or link your Google account in settings.",
-                    "existing_account": true
-                }),
-            ));
+            return Err(crate::error::AppError::Conflict("An account with this email already exists. Please login with your password or link your Google account in settings.".to_string()));
         }
 
         if !allow_new_account {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({
-                    "error": "No account found. Please create an account first or use an invitation link to join a company.",
-                    "requires_invitation": true
-                }),
-            ));
+            return Err(crate::error::AppError::Forbidden("No account found. Please create an account first or use an invitation link to join a company.".to_string()));
         }
 
         let new_user = db::create_oauth_user(
@@ -377,10 +339,7 @@ impl GoogleOAuthClient {
         .await
         .map_err(|e| {
             tracing::error!("Failed to create OAuth user: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to create user account" }),
-            )
+            crate::error::AppError::Internal("Failed to create user account".to_string())
         })?;
 
         AuditLogger::log_oauth_login(
@@ -412,7 +371,7 @@ impl GoogleOAuthClient {
         pool: &PgPool,
         user_id: &str,
         user_info: OAuthUserInfo,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), crate::error::AppError> {
         tracing::info!(
             "OAuth linking: user_id={}, oauth_subject={}, google_email={}",
             user_id,
@@ -424,16 +383,12 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Database error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                crate::error::AppError::Internal("Database error".to_string())
             })?
             .is_some()
         {
-            return Err((
-                StatusCode::CONFLICT,
-                json!({ "error": "This Google account is already linked to another user" }),
+            return Err(crate::error::AppError::Conflict(
+                "This Google account is already linked to another user".to_string(),
             ));
         }
 
@@ -447,10 +402,7 @@ impl GoogleOAuthClient {
         .await
         .map_err(|e| {
             tracing::error!("Failed to link OAuth account: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to link account" }),
-            )
+            crate::error::AppError::Internal("Failed to link account".to_string())
         })?;
 
         tracing::info!(
@@ -465,17 +417,11 @@ impl GoogleOAuthClient {
     ///
     /// # Errors
     /// Returns an error if token generation fails.
-    pub fn generate_jwt_for_user(
-        &self,
-        user_id: &str,
-    ) -> Result<String, (StatusCode, serde_json::Value)> {
+    pub fn generate_jwt_for_user(&self, user_id: &str) -> Result<String, crate::error::AppError> {
         let jwt_config = JwtManager::get_config();
         jwt_config.generate_token(user_id, 24).map_err(|e| {
             tracing::error!("Failed to generate JWT token: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to generate token" }),
-            )
+            crate::error::AppError::Internal("Failed to generate token".to_string())
         })
     }
 }

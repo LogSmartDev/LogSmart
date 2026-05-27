@@ -8,7 +8,7 @@ use crate::{
 use axum::{
     Json,
     extract::{ConnectInfo, Query, State},
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue},
     response::{IntoResponse, Redirect},
 };
 use dashmap::DashMap;
@@ -124,35 +124,26 @@ pub struct OAuthInitiateQuery {
 pub async fn initiate_google_login(
     State(state): State<AppState>,
     Query(query): Query<OAuthInitiateQuery>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     tracing::info!("OAuth initiate called with mode: {:?}", query.mode);
 
-    let oauth_client = state.google_oauth.as_ref().ok_or_else(|| {
-        tracing::error!("Google OAuth client not configured - google_oauth is None");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "OAuth not configured" })),
-        )
-    })?;
+    let oauth_client = state
+        .google_oauth
+        .as_ref()
+        .ok_or_else(|| crate::error::AppError::Internal("OAuth not configured".to_string()))?;
 
     let (auth_url, csrf_state, nonce) = oauth_client.initiate_login();
 
     let mut url = Url::parse(&auth_url).map_err(|e| {
-        tracing::error!("Failed to parse OAuth authorization URL: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to initiate OAuth flow" })),
-        )
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to initiate OAuth flow".to_string())
     })?;
 
     if url.host_str() == Some("mockoidc") {
         tracing::info!("OAuth authorization URL uses mock OIDC host: {}", url);
         url.set_host(Some("localhost")).map_err(|e| {
-            tracing::error!("Failed to set host on OAuth URL: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to initiate OAuth flow" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to initiate OAuth flow".to_string())
         })?;
     }
     let auth_url = url.to_string();
@@ -197,19 +188,16 @@ pub async fn google_callback(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Query(params): Query<GoogleCallbackParams>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<impl IntoResponse, crate::error::AppError> {
     tracing::info!(
         "OAuth callback received with state: {}",
         &params.state[..8.min(params.state.len())]
     );
 
-    let oauth_client = state.google_oauth.as_ref().ok_or_else(|| {
-        tracing::error!("Google OAuth client not configured in callback");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "OAuth not configured" })),
-        )
-    })?;
+    let oauth_client = state
+        .google_oauth
+        .as_ref()
+        .ok_or_else(|| crate::error::AppError::Internal("OAuth not configured".to_string()))?;
 
     let (nonce, is_link) = state
         .oauth_state_store
@@ -219,10 +207,7 @@ pub async fn google_callback(
                 "Invalid or expired OAuth state: {}",
                 &params.state[..8.min(params.state.len())]
             );
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": "Invalid or expired state parameter" })),
-            )
+            crate::error::AppError::Unauthorized("Invalid or expired state parameter".to_string())
         })?;
 
     tracing::info!("OAuth state verified, is_link={}", is_link);
@@ -230,13 +215,7 @@ pub async fn google_callback(
     let ip_address = Some(extract_ip_from_headers_and_addr(&headers, &addr));
     let user_agent = extract_user_agent(&headers);
 
-    let (user_info, _claims) = oauth_client
-        .exchange_code(params.code, nonce)
-        .await
-        .map_err(|(status, value)| {
-            tracing::error!("OAuth code exchange failed: {:?}", value);
-            (status, Json(value))
-        })?;
+    let (user_info, _claims) = oauth_client.exchange_code(params.code, nonce).await?;
 
     tracing::info!(
         "OAuth code exchanged successfully for email: {}",
@@ -264,11 +243,8 @@ pub async fn google_callback(
                 "oauth_link_pending={link_token}; Path=/; SameSite=Lax; Max-Age=300{domain_attr}",
             ))
             .map_err(|e| {
-                tracing::error!("Invalid header value: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Internal server error"})),
-                )
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Internal server error".to_string())
             })?,
         );
 
@@ -283,9 +259,7 @@ pub async fn google_callback(
         .await
     {
         Ok(user) => {
-            let token = oauth_client
-                .generate_jwt_for_user(user.id.as_str())
-                .map_err(|(status, value)| (status, Json(value)))?;
+            let token = oauth_client.generate_jwt_for_user(user.id.as_str())?;
 
             let cookie_domain = std::env::var("COOKIE_DOMAIN").unwrap_or_default();
             let domain_attr = if cookie_domain.is_empty() {
@@ -305,29 +279,15 @@ pub async fn google_callback(
             response.headers_mut().insert(
                 HeaderName::from_static("set-cookie"),
                 HeaderValue::from_str(&cookie).map_err(|e| {
-                    tracing::error!("Invalid cookie value: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({"error": "Internal server error"})),
-                    )
+                    tracing::error!("Error: {:?}", e);
+                    crate::error::AppError::Internal("Internal server error".to_string())
                 })?,
             );
 
             Ok(response)
         }
-        Err((_status, value)) => {
-            let error_code =
-                value
-                    .get("error")
-                    .and_then(|e| e.as_str())
-                    .map_or("authentication_failed", |e| match e {
-                        "user_not_found" => "user_not_found",
-                        "account_locked" => "account_locked",
-                        "invalid_credentials" => "invalid_credentials",
-                        _ => "authentication_failed",
-                    });
-
-            let redirect_url = format!("{frontend_url}/login?oauth_error={error_code}");
+        Err(err) => {
+            let redirect_url = format!("{frontend_url}/login?oauth_error={err}");
             Ok(Redirect::to(&redirect_url).into_response())
         }
     }
@@ -360,48 +320,32 @@ pub async fn confirm_google_link(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     AnyAuthUser(_claims, user): AnyAuthUser,
     Json(payload): Json<OAuthLinkConfirmRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let oauth_client = state.google_oauth.as_ref().ok_or_else(|| {
-        tracing::error!("Google OAuth client not configured");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "OAuth not configured" })),
-        )
-    })?;
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
+    let oauth_client = state
+        .google_oauth
+        .as_ref()
+        .ok_or_else(|| crate::error::AppError::Internal("OAuth not configured".to_string()))?;
 
     let user_info = state
         .oauth_state_store
         .verify_and_remove_link_token(&payload.link_token)
         .ok_or_else(|| {
-            tracing::error!("Invalid or expired OAuth link token");
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": "Invalid or expired link token" })),
-            )
+            crate::error::AppError::Unauthorized("Invalid or expired link token".to_string())
         })?;
 
     oauth_client
         .link_google_account(&state.postgres, &user.id, user_info)
-        .await
-        .map_err(|(status, value)| (status, Json(value)))?;
+        .await?;
 
     state.user_cache.invalidate(&user.id).await;
 
     let user = crate::db::get_user_by_id(&state.postgres, &user.id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to fetch user: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Database error" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "User not found" })),
-            )
-        })?;
+        .ok_or_else(|| crate::error::AppError::NotFound("User not found".to_string()))?;
 
     AuditLogger::log_oauth_account_linked(
         &state.postgres,
@@ -439,53 +383,34 @@ pub async fn link_google_account(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     AnyAuthUser(_claims, user): AnyAuthUser,
     Json(payload): Json<OAuthCallbackRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let oauth_client = state.google_oauth.as_ref().ok_or_else(|| {
-        tracing::error!("Google OAuth client not configured");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "OAuth not configured" })),
-        )
-    })?;
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
+    let oauth_client = state
+        .google_oauth
+        .as_ref()
+        .ok_or_else(|| crate::error::AppError::Internal("OAuth not configured".to_string()))?;
 
     let (nonce, _is_link) = state
         .oauth_state_store
         .verify_and_remove(&payload.state)
         .ok_or_else(|| {
-            tracing::error!("Invalid or expired OAuth state");
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": "Invalid or expired state parameter" })),
-            )
+            crate::error::AppError::Unauthorized("Invalid or expired state parameter".to_string())
         })?;
 
-    let (user_info, _claims) = oauth_client
-        .exchange_code(payload.code, nonce)
-        .await
-        .map_err(|(status, value)| (status, Json(value)))?;
+    let (user_info, _claims) = oauth_client.exchange_code(payload.code, nonce).await?;
 
     oauth_client
         .link_google_account(&state.postgres, &user.id, user_info)
-        .await
-        .map_err(|(status, value)| (status, Json(value)))?;
+        .await?;
 
     state.user_cache.invalidate(&user.id).await;
 
     let user = crate::db::get_user_by_id(&state.postgres, &user.id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to fetch user: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Database error" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "User not found" })),
-            )
-        })?;
+        .ok_or_else(|| crate::error::AppError::NotFound("User not found".to_string()))?;
 
     AuditLogger::log_oauth_account_linked(
         &state.postgres,
@@ -520,24 +445,19 @@ pub async fn unlink_google_account(
     State(state): State<AppState>,
     AuditRequestContext(audit_ctx): AuditRequestContext,
     AnyAuthUser(_claims, user): AnyAuthUser,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     if user.password_hash.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(
-                json!({ "error": "Cannot unlink Google account. Please set a password first to maintain account access." }),
-            ),
+        return Err(crate::error::AppError::BadRequest(
+            "Cannot unlink Google account. Please set a password first to maintain account access."
+                .to_string(),
         ));
     }
 
     crate::db::unlink_oauth_from_user(&state.postgres, &user.id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to unlink OAuth account: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to unlink account" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to unlink account".to_string())
         })?;
 
     state.user_cache.invalidate(&user.id).await;

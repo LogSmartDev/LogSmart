@@ -479,8 +479,9 @@ async fn test_clock_service_clock_in_conflict_when_already_in() {
     let second = back_end::services::ClockService::clock_in(&pool, &user.id, &company.id).await;
 
     assert!(second.is_err());
-    let (status, _body) = second.unwrap_err();
-    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let err = second.unwrap_err();
+    // Check that it's a Conflict error
+    assert!(matches!(err, back_end::error::AppError::Conflict(_)));
 }
 
 #[tokio::test]
@@ -512,6 +513,7 @@ async fn test_clock_service_clock_out_bad_request_when_not_in() {
     let result = back_end::services::ClockService::clock_out(&pool, &user.id).await;
 
     assert!(result.is_err());
-    let (status, _body) = result.unwrap_err();
-    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    let err = result.unwrap_err();
+    // Check that it's a BadRequest error
+    assert!(matches!(err, back_end::error::AppError::BadRequest(_)));
 }

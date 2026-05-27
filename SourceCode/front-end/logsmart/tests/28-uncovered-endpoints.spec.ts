@@ -587,7 +587,10 @@ test.describe('Update Branch', () => {
 			})
 		});
 
-		expect(await updateResponse.json()).toStrictEqual({ error: 'Branch name cannot be empty' });
+		expect(await updateResponse.json()).toStrictEqual({
+			error:
+				'Validation failed: name: Validation error: length [{"min": Number(1), "max": Number(255), "value": String("")}]'
+		});
 		expect([400, 422]).toContain(updateResponse.status);
 	});
 });

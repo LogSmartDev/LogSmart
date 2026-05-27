@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 use crate::{
     AppState,
@@ -40,21 +43,17 @@ pub async fn list_due_forms_today(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<DueFormsResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<DueFormsResponse>, crate::error::AppError> {
     let max = params
         .get("max")
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(20);
 
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let templates =
         services::LogEntryService::list_due_forms(&state, &company_id, user.branch_id.as_deref())
-            .await
-            .map_err(|(status, err)| (status, Json(err)))?;
+            .await?;
 
     let now = chrono::Utc::now();
 
@@ -70,11 +69,8 @@ pub async fn list_due_forms_today(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Failed to get latest submitted entries: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to retrieve due forms" })),
-        )
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
     })?;
 
     // Now compute missed periods using actual last submitted periods
@@ -130,17 +126,14 @@ pub async fn list_due_forms_today(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Failed to get periods with entries: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to retrieve due forms" })),
-        )
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
     })?;
 
     let mut due_forms = Vec::new();
     let mut seen_forms: HashSet<(String, String)> = HashSet::new();
 
-    for template in needed_templates {
+    for template in &needed_templates {
         let last_submitted = latest_submitted_entries
             .get(&template.template_name)
             .cloned();
@@ -184,8 +177,8 @@ pub async fn list_due_forms_today(
                         .as_ref()
                         .and_then(|e| e.submitted_at.map(|ts| ts.to_rfc3339())),
                     period: period.clone(),
-                    status: Some(LogStatus::Overdue.as_str().to_string()),
-                    availability_status: status.as_str().to_string(),
+                    status: Some(LogStatus::Overdue.to_string()),
+                    availability_status: status.to_string(),
                     available_from,
                     due_at,
                 });
@@ -196,72 +189,104 @@ pub async fn list_due_forms_today(
             break;
         }
 
-        if logs_db::is_form_due_today(&template.schedule) {
-            let has_submitted = logs_db::has_submitted_entry_for_current_period(
+        // Batch-check which templates are due today and have no submission
+        let due_today_templates: Vec<&logs_db::TemplateDocument> = needed_templates
+            .iter()
+            .filter(|t| logs_db::is_form_due_today(&t.schedule))
+            .copied()
+            .collect();
+
+        if !due_today_templates.is_empty() {
+            let due_template_names: Vec<String> = due_today_templates
+                .iter()
+                .map(|t| t.template_name.clone())
+                .collect();
+
+            // Single batch query for all submission checks
+            let templates_with_freq: Vec<(&str, &logs_db::Frequency)> = due_today_templates
+                .iter()
+                .map(|t| (t.template_name.as_str(), &t.schedule.frequency))
+                .collect();
+            let submitted_map = logs_db::has_submitted_entries_batch(
                 &state.mongodb,
-                &user.id,
                 &company_id,
-                &template.template_name,
-                &template.schedule.frequency,
+                &templates_with_freq,
             )
             .await
             .map_err(|e| {
-                tracing::error!("Failed to check submission status: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to retrieve due forms" })),
-                )
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
             })?;
 
-            if !has_submitted {
-                let draft_entry = logs_db::get_draft_entry_for_current_period(
-                    &state.mongodb,
-                    &user.id,
-                    &company_id,
-                    &template.template_name,
-                    &template.schedule.frequency,
-                )
-                .await
-                .ok()
-                .flatten();
+            // Single batch query for all draft entries
+            let draft_map = logs_db::get_draft_entries_batch(
+                &state.mongodb,
+                &user.id,
+                &company_id,
+                &due_template_names,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+            })?;
 
-                let processed_layout = logs_db::process_template_layout_with_period(
-                    &template.template_layout,
-                    &template.schedule.frequency,
-                );
+            for template in due_today_templates {
+                let has_submitted = submitted_map
+                    .get(&template.template_name)
+                    .copied()
+                    .unwrap_or(false);
 
-                let period = logs_db::format_period_for_frequency(&template.schedule.frequency);
-                let available_from =
-                    logs_db::get_available_from_datetime(&template.schedule, &period);
-                let due_at = logs_db::get_due_at_datetime(&template.schedule, &period);
+                if !has_submitted {
+                    let draft_entry = draft_map
+                        .get(&template.template_name)
+                        .and_then(|e| e.clone());
 
-                let form_key = (template.template_name.clone(), period.clone());
-                if seen_forms.contains(&form_key) {
-                    continue;
+                    let last_submitted = latest_submitted_entries
+                        .get(&template.template_name)
+                        .cloned();
+
+                    let processed_layout = logs_db::process_template_layout_with_period(
+                        &template.template_layout,
+                        &template.schedule.frequency,
+                    );
+
+                    let period = logs_db::format_period_for_frequency(&template.schedule.frequency);
+                    let available_from =
+                        logs_db::get_available_from_datetime(&template.schedule, &period);
+                    let due_at = logs_db::get_due_at_datetime(&template.schedule, &period);
+
+                    let form_key = (template.template_name.clone(), period.clone());
+                    if seen_forms.contains(&form_key) {
+                        continue;
+                    }
+                    seen_forms.insert(form_key);
+
+                    let status = logs_db::get_availability_status_for_period(
+                        &template.schedule,
+                        &period,
+                        now,
+                    );
+
+                    let derived_draft_status = draft_entry.as_ref().map(|e| {
+                        logs_db::derive_log_status(e.status, &template.schedule, &period, now)
+                            .0
+                            .to_string()
+                    });
+
+                    due_forms.push(DueFormInfo {
+                        template_name: template.template_name.clone(),
+                        template_layout: processed_layout,
+                        last_submitted: last_submitted
+                            .as_ref()
+                            .and_then(|e| e.submitted_at.map(|ts| ts.to_rfc3339())),
+                        period,
+                        status: derived_draft_status,
+                        availability_status: status.to_string(),
+                        available_from,
+                        due_at,
+                    });
                 }
-                seen_forms.insert(form_key);
-
-                let status =
-                    logs_db::get_availability_status_for_period(&template.schedule, &period, now);
-
-                let derived_draft_status = draft_entry.as_ref().map(|e| {
-                    logs_db::derive_log_status(e.status, &template.schedule, &period, now)
-                        .0
-                        .as_str()
-                        .to_string()
-                });
-
-                due_forms.push(DueFormInfo {
-                    template_name: template.template_name.clone(),
-                    template_layout: processed_layout,
-                    last_submitted: last_submitted
-                        .and_then(|e| e.submitted_at.map(|ts| ts.to_rfc3339())),
-                    period,
-                    status: derived_draft_status,
-                    availability_status: status.as_str().to_string(),
-                    available_from,
-                    due_at,
-                });
             }
         }
     }
@@ -293,11 +318,10 @@ pub async fn create_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Json(payload): Json<CreateLogEntryRequest>,
-) -> Result<(StatusCode, Json<CreateLogEntryResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<CreateLogEntryResponse>), crate::error::AppError> {
     if payload.template_name.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Template name is required" })),
+        return Err(crate::error::AppError::BadRequest(
+            "Template name is required".to_string(),
         ));
     }
 
@@ -307,8 +331,7 @@ pub async fn create_log_entry(
         &payload.template_name,
         payload.period.as_deref(),
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -340,28 +363,19 @@ pub async fn get_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<LogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let entry = services::LogEntryService::get_log_entry(&state, &user, &entry_id)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+) -> Result<Json<LogEntryResponse>, crate::error::AppError> {
+    let entry = services::LogEntryService::get_log_entry(&state, &user, &entry_id).await?;
 
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let template = logs_db::get_template_by_name(&state.mongodb, &entry.template_name, &company_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to get template: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to get template" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get template".to_string())
         })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Template not found" })),
+        .ok_or(crate::error::AppError::NotFound(
+            "Template not found".to_string(),
         ))?;
 
     let processed_layout = logs_db::process_template_layout_with_period_string(
@@ -380,8 +394,8 @@ pub async fn get_log_entry(
         template_name: entry.template_name,
         template_layout: processed_layout,
         entry_data: entry.entry_data,
-        status: entry.status.as_str().to_string(),
-        availability_status: availability.as_str().to_string(),
+        status: entry.status.to_string(),
+        availability_status: availability.to_string(),
         created_at: entry.created_at.to_rfc3339(),
         updated_at: entry.updated_at.to_rfc3339(),
         submitted_at: entry.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -412,34 +426,26 @@ pub async fn update_log_entry(
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
     Json(payload): Json<UpdateLogEntryRequest>,
-) -> Result<Json<LogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<LogEntryResponse>, crate::error::AppError> {
     let updated_entry = services::LogEntryService::update_log_entry(
         &state,
         &user.id,
         &entry_id,
         &payload.entry_data,
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
 
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+    let company_id = user.company_id_or_forbidden()?;
 
     let template =
         logs_db::get_template_by_name(&state.mongodb, &updated_entry.template_name, &company_id)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to get template: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to get template" })),
-                )
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to get template".to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Template not found" })),
+            .ok_or(crate::error::AppError::NotFound(
+                "Template not found".to_string(),
             ))?;
 
     let processed_layout = logs_db::process_template_layout_with_period_string(
@@ -458,8 +464,8 @@ pub async fn update_log_entry(
         template_name: updated_entry.template_name,
         template_layout: processed_layout,
         entry_data: updated_entry.entry_data,
-        status: updated_entry.status.as_str().to_string(),
-        availability_status: availability.as_str().to_string(),
+        status: updated_entry.status.to_string(),
+        availability_status: availability.to_string(),
         created_at: updated_entry.created_at.to_rfc3339(),
         updated_at: updated_entry.updated_at.to_rfc3339(),
         submitted_at: updated_entry.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -488,10 +494,8 @@ pub async fn submit_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<SubmitLogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
-    services::LogEntryService::submit_log_entry(&state, &user.id, &entry_id)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+) -> Result<Json<SubmitLogEntryResponse>, crate::error::AppError> {
+    services::LogEntryService::submit_log_entry(&state, &user.id, &entry_id).await?;
 
     Ok(Json(SubmitLogEntryResponse {
         message: "Log entry submitted successfully.".to_string(),
@@ -519,10 +523,8 @@ pub async fn unsubmit_log_entry(
     BranchManagerUser(_claims, user): BranchManagerUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<SubmitLogEntryResponse>, (StatusCode, Json<serde_json::Value>)> {
-    services::LogEntryService::unsubmit_log_entry(&state, &user, &entry_id)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+) -> Result<Json<SubmitLogEntryResponse>, crate::error::AppError> {
+    services::LogEntryService::unsubmit_log_entry(&state, &user, &entry_id).await?;
 
     Ok(Json(SubmitLogEntryResponse {
         message: "Log entry returned to draft successfully.".to_string(),
@@ -550,10 +552,8 @@ pub async fn delete_log_entry(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    services::LogEntryService::delete_log_entry(&state, &user, &entry_id)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
+    services::LogEntryService::delete_log_entry(&state, &user, &entry_id).await?;
 
     Ok(Json(json!({ "message": "Log entry deleted successfully" })))
 }
@@ -578,11 +578,13 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String, S>>,
-) -> Result<Json<ListLogEntriesResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.clone().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<ListLogEntriesResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     // Parse optional branch_ids parameter (comma-separated)
     let branch_ids_param = params.get("branch_ids");
@@ -604,34 +606,38 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
         }
     } else {
         // Branch manager - only their branch
-        let branch_id = user.branch_id.as_ref().ok_or((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Branch manager has no branch assigned" })),
-        ))?;
+        let branch_id = user
+            .branch_id
+            .as_ref()
+            .ok_or(crate::error::AppError::Forbidden(
+                "Branch manager has no branch assigned".to_string(),
+            ))?;
         logs_db::get_branch_log_entries(&state.mongodb, &company_id, branch_id).await
     }
     .map_err(|e| {
-        tracing::error!("Failed to get log entries: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to get log entries" })),
-        )
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to get log entries".to_string())
     })?;
 
     let mut response_entries = Vec::new();
+
+    // Batch-fetch all templates once instead of N queries in the loop
+    let all_templates = logs_db::get_templates_by_company(&state.mongodb, &company_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get templates".to_string())
+        })?;
+    let template_map: HashMap<&str, &logs_db::TemplateDocument> = all_templates
+        .iter()
+        .map(|t| (t.template_name.as_str(), t))
+        .collect();
+
     for e in entries {
-        let template = logs_db::get_template_by_name(&state.mongodb, &e.template_name, &company_id)
-            .await
-            .map_err(|err| {
-                tracing::error!("Failed to get template: {:?}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to get template" })),
-                )
-            })?;
+        let template = template_map.get(e.template_name.as_str());
 
         let (processed_layout, derived_status, availability_status) =
-            if let Some(template) = template {
+            if let Some(template) = template.copied() {
                 let layout = logs_db::process_template_layout_with_period_string(
                     &template.template_layout,
                     &e.period,
@@ -656,8 +662,8 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
             template_name: e.template_name,
             template_layout: processed_layout,
             entry_data: e.entry_data,
-            status: derived_status.as_str().to_string(),
-            availability_status: availability_status.as_str().to_string(),
+            status: derived_status.to_string(),
+            availability_status: availability_status.to_string(),
             created_at: e.created_at.to_rfc3339(),
             updated_at: e.updated_at.to_rfc3339(),
             submitted_at: e.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -690,35 +696,34 @@ pub async fn list_user_log_entries(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<ListLogEntriesResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<ListLogEntriesResponse>, crate::error::AppError> {
+    let company_id = user.company_id_or_forbidden()?;
 
     let mut entries =
-        services::LogEntryService::get_user_log_entries(&state, &user.id, &company_id)
-            .await
-            .map_err(|(status, err)| (status, Json(err)))?;
+        services::LogEntryService::get_user_log_entries(&state, &user.id, &company_id).await?;
 
     if let Some(template_name) = params.get("template_name") {
         entries.retain(|e| e.template_name == *template_name);
     }
 
+    // Batch-fetch all templates once instead of N queries in the loop
+    let all_templates = logs_db::get_templates_by_company(&state.mongodb, &company_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to get templates".to_string())
+        })?;
+    let template_map: HashMap<&str, &logs_db::TemplateDocument> = all_templates
+        .iter()
+        .map(|t| (t.template_name.as_str(), t))
+        .collect();
+
     let mut response_entries = Vec::new();
     for e in entries {
-        let template = logs_db::get_template_by_name(&state.mongodb, &e.template_name, &company_id)
-            .await
-            .map_err(|err| {
-                tracing::error!("Failed to get template: {:?}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to get template" })),
-                )
-            })?;
+        let template = template_map.get(e.template_name.as_str());
 
         let (processed_layout, derived_status, availability_status) =
-            if let Some(template) = template {
+            if let Some(template) = template.copied() {
                 let layout = logs_db::process_template_layout_with_period_string(
                     &template.template_layout,
                     &e.period,
@@ -743,8 +748,8 @@ pub async fn list_user_log_entries(
             template_name: e.template_name,
             template_layout: processed_layout,
             entry_data: e.entry_data,
-            status: derived_status.as_str().to_string(),
-            availability_status: availability_status.as_str().to_string(),
+            status: derived_status.to_string(),
+            availability_status: availability_status.to_string(),
             created_at: e.created_at.to_rfc3339(),
             updated_at: e.updated_at.to_rfc3339(),
             submitted_at: e.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -752,7 +757,7 @@ pub async fn list_user_log_entries(
         });
 
         if let Some(status) = params.get("status")
-            && let Some(filter_status) = logs_db::LogStatus::from_str(status)
+            && let Ok(filter_status) = logs_db::LogStatus::from_str(status)
             && derived_status != filter_status
         {
             response_entries.pop();
@@ -782,16 +787,12 @@ pub async fn create_report_run(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Json(mut payload): Json<CreateReportRunRequest>,
-) -> Result<(StatusCode, Json<CreateReportRunResponse>), (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<(StatusCode, Json<CreateReportRunResponse>), crate::error::AppError> {
+    let company_id = user.company_id_or_forbidden()?;
 
     if payload.params.date_from_iso.is_empty() || payload.params.date_to_iso.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "date_from_iso and date_to_iso are required" })),
+        return Err(crate::error::AppError::BadRequest(
+            "date_from_iso and date_to_iso are required".to_string(),
         ));
     }
 
@@ -814,11 +815,8 @@ pub async fn create_report_run(
     let saved = logs_db::create_report_run(&state.mongodb, &doc)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to save report run: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to save report run" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to save report run".to_string())
         })?;
 
     Ok((
@@ -854,11 +852,8 @@ pub async fn list_report_runs(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<ListReportRunsResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<ListReportRunsResponse>, crate::error::AppError> {
+    let company_id = user.company_id_or_forbidden()?;
 
     let limit = params
         .get("limit")
@@ -869,11 +864,8 @@ pub async fn list_report_runs(
     let runs = logs_db::list_report_runs(&state.mongodb, &user.id, &company_id, limit)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to list report runs: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to list report runs" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to list report runs".to_string())
         })?;
 
     let mut seen = std::collections::HashSet::new();
@@ -881,11 +873,8 @@ pub async fn list_report_runs(
     for run in runs {
         let key = if run.params_key.is_empty() {
             logs_db::report_params_key(&run.params).map_err(|e| {
-                tracing::error!("Failed to compute report run key: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Failed to list report runs" })),
-                )
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to list report runs".to_string())
             })?
         } else {
             run.params_key.clone()
@@ -930,26 +919,19 @@ pub async fn use_report_run(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Path(report_id): Path<String>,
-) -> Result<Json<UseReportRunResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<UseReportRunResponse>, crate::error::AppError> {
+    let company_id = user.company_id_or_forbidden()?;
 
     let touched = logs_db::touch_report_run(&state.mongodb, &report_id, &user.id, &company_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to update report run usage: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to update report run usage" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to update report run usage".to_string())
         })?;
 
     if !touched {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Report run not found" })),
+        return Err(crate::error::AppError::NotFound(
+            "Report run not found".to_string(),
         ));
     }
 
@@ -977,11 +959,8 @@ pub async fn delete_report_run(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
     Path(report_id): Path<String>,
-) -> Result<Json<DeleteReportRunResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<DeleteReportRunResponse>, crate::error::AppError> {
+    let company_id = user.company_id_or_forbidden()?;
 
     tracing::info!(
         target: "report_runs",
@@ -1002,10 +981,7 @@ pub async fn delete_report_run(
                 company_id,
                 e
             );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to delete report run" })),
-            )
+            crate::error::AppError::Internal("Failed to delete report run".to_string())
         })?;
 
     if !deleted {
@@ -1016,9 +992,8 @@ pub async fn delete_report_run(
             user.id,
             company_id
         );
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Report run not found" })),
+        return Err(crate::error::AppError::NotFound(
+            "Report run not found".to_string(),
         ));
     }
 

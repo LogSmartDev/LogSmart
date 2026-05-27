@@ -1,13 +1,12 @@
 use crate::middleware::LogSmartAdminUser;
 use crate::rate_limit::{
-    GENERAL_IP_LIMIT, LOGIN_EMAIL_LIMIT, LOGIN_IP_LIMIT, REGISTER_EMAIL_LIMIT, REGISTER_IP_LIMIT,
+    get_general_ip_limit, get_login_email_limit, get_login_ip_limit, get_register_email_limit,
+    get_register_ip_limit,
 };
-use crate::{AppState, db};
+use crate::{AppState, db, utils};
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use serde::Serialize;
-use serde_json::json;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct BasicHealthResponse {
@@ -72,11 +71,9 @@ pub async fn get_db_health(
             metrics,
         })
         .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to get health metrics: {e}")})),
-        )
-            .into_response(),
+        Err(e) => {
+            utils::err_internal(&format!("Failed to get health metrics: {e}")).into_response()
+        }
     }
 }
 
@@ -108,11 +105,7 @@ pub async fn get_db_slow_queries(
 
     match db::get_slow_queries(&state.postgres, limit).await {
         Ok(queries) => Json(SlowQueriesResponse { queries }).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to get slow queries: {e}")})),
-        )
-            .into_response(),
+        Err(e) => utils::err_internal(&format!("Failed to get slow queries: {e}")).into_response(),
     }
 }
 
@@ -135,21 +128,14 @@ pub async fn get_db_index_usage(
     let indexes = match db::get_index_usage(&state.postgres).await {
         Ok(idx) => idx,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Failed to get index usage: {e}")})),
-            )
-                .into_response();
+            return utils::err_internal(&format!("Failed to get index usage: {e}")).into_response();
         }
     };
 
     let unused = match db::check_unused_indexes(&state.postgres).await {
         Ok(un) => un,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Failed to check unused indexes: {e}")})),
-            )
+            return utils::err_internal(&format!("Failed to check unused indexes: {e}"))
                 .into_response();
         }
     };
@@ -179,11 +165,7 @@ pub async fn get_db_table_sizes(
 ) -> impl IntoResponse {
     match db::get_table_sizes(&state.postgres).await {
         Ok(tables) => Json(TableSizesResponse { tables }).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to get table sizes: {e}")})),
-        )
-            .into_response(),
+        Err(e) => utils::err_internal(&format!("Failed to get table sizes: {e}")).into_response(),
     }
 }
 
@@ -216,11 +198,11 @@ pub async fn get_rate_limit_status(
     let rate_limit = &state.rate_limit;
     Json(RateLimitStatusResponse {
         enabled: !rate_limit.disabled,
-        login_ip_limit: LOGIN_IP_LIMIT,
-        register_ip_limit: REGISTER_IP_LIMIT,
-        general_ip_limit: GENERAL_IP_LIMIT,
-        login_email_limit: LOGIN_EMAIL_LIMIT,
-        register_email_limit: REGISTER_EMAIL_LIMIT,
+        login_ip_limit: get_login_ip_limit(),
+        register_ip_limit: get_register_ip_limit(),
+        general_ip_limit: get_general_ip_limit(),
+        login_email_limit: get_login_email_limit(),
+        register_email_limit: get_register_email_limit(),
         export_limit: 1,
     })
     .into_response()

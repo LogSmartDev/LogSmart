@@ -7,7 +7,7 @@ macro_rules! try_db {
     ($expr:expr, $context:literal) => {
         $expr.await.map_err(|e| {
             tracing::error!(error = ?e, context = $context, "Database error");
-            $crate::utils::svc_err_internal($context)
+            $crate::error::AppError::Internal($context.to_string())
         })
     };
 }
@@ -27,7 +27,6 @@ pub struct AuditContext {
 }
 
 impl AuditContext {
-    #[must_use]
     pub fn from_request(
         headers: &HeaderMap,
         addr: &std::net::SocketAddr,
@@ -43,32 +42,27 @@ impl AuditContext {
         }
     }
 
-    #[must_use]
     pub fn with_actor(mut self, user: &db::UserRecord) -> Self {
         self.actor_role = Some(user.role.to_string());
         self.company_id = user.company_id.clone();
         self
     }
 
-    #[must_use]
     pub fn with_company_id(mut self, company_id: Option<String>) -> Self {
         self.company_id = company_id;
         self
     }
 
-    #[must_use]
     pub fn with_target_user_id(mut self, target_user_id: Option<String>) -> Self {
         self.target_user_id = target_user_id;
         self
     }
 
-    #[must_use]
     pub fn with_target_email(mut self, target_email: Option<String>) -> Self {
         self.target_email = target_email;
         self
     }
 
-    #[must_use]
     pub fn with_actor_role(mut self, actor_role: Option<String>) -> Self {
         self.actor_role = actor_role;
         self
@@ -371,7 +365,6 @@ impl AuditLogger {
     }
 }
 
-#[must_use]
 pub fn extract_ip_from_headers_and_addr(
     headers: &HeaderMap,
     addr: &std::net::SocketAddr,
@@ -397,67 +390,44 @@ fn first_ip_from_header(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
-fn is_production_env() -> bool {
-    let env = std::env::var("APP_ENV")
-        .or_else(|_| std::env::var("ENVIRONMENT"))
-        .or_else(|_| std::env::var("RUST_ENV"))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    env == "production" || env == "prod"
-}
-
-#[must_use]
 pub fn extract_optional_ip_from_headers_and_addr(
     headers: &HeaderMap,
     addr: Option<&std::net::SocketAddr>,
 ) -> Option<String> {
     let direct_ip = addr.map(|a| a.ip().to_string());
-
-    if is_production_env() {
-        first_ip_from_header(headers, "cf-connecting-ip")
-            .or_else(|| first_ip_from_header(headers, "true-client-ip"))
-            .or_else(|| first_ip_from_header(headers, "x-forwarded-for"))
-            .or_else(|| first_ip_from_header(headers, "x-real-ip"))
-            .or(direct_ip)
-    } else {
-        direct_ip
-            .or_else(|| first_ip_from_header(headers, "x-real-ip"))
-            .or_else(|| first_ip_from_header(headers, "cf-connecting-ip"))
-    }
+    first_ip_from_header(headers, "cf-connecting-ip")
+        .or_else(|| first_ip_from_header(headers, "true-client-ip"))
+        .or_else(|| first_ip_from_header(headers, "x-forwarded-for"))
+        .or_else(|| first_ip_from_header(headers, "x-real-ip"))
+        .or(direct_ip)
 }
 
-pub type HandlerError = (axum::http::StatusCode, axum::Json<serde_json::Value>);
-
-pub fn err(status: axum::http::StatusCode, message: &str) -> HandlerError {
-    (status, axum::Json(serde_json::json!({ "error": message })))
+pub fn err_internal(msg: &str) -> crate::error::AppError {
+    crate::error::AppError::Internal(msg.to_string())
 }
 
-pub fn err_internal(msg: &str) -> HandlerError {
-    err(axum::http::StatusCode::INTERNAL_SERVER_ERROR, msg)
+pub fn err_not_found(msg: &str) -> crate::error::AppError {
+    crate::error::AppError::NotFound(msg.to_string())
 }
 
-pub fn err_not_found(msg: &str) -> HandlerError {
-    err(axum::http::StatusCode::NOT_FOUND, msg)
+pub fn err_forbidden(msg: &str) -> crate::error::AppError {
+    crate::error::AppError::Forbidden(msg.to_string())
 }
 
-pub fn err_forbidden(msg: &str) -> HandlerError {
-    err(axum::http::StatusCode::FORBIDDEN, msg)
+pub fn err_bad_request(msg: &str) -> crate::error::AppError {
+    crate::error::AppError::BadRequest(msg.to_string())
 }
 
-pub fn err_bad_request(msg: &str) -> HandlerError {
-    err(axum::http::StatusCode::BAD_REQUEST, msg)
+pub fn err_unauthorized(msg: &str) -> crate::error::AppError {
+    crate::error::AppError::Unauthorized(msg.to_string())
 }
 
-pub fn err_unauthorized(msg: &str) -> HandlerError {
-    err(axum::http::StatusCode::UNAUTHORIZED, msg)
+pub fn err_conflict(msg: &str) -> crate::error::AppError {
+    crate::error::AppError::Conflict(msg.to_string())
 }
 
-pub fn err_conflict(msg: &str) -> HandlerError {
-    err(axum::http::StatusCode::CONFLICT, msg)
-}
-
-pub fn err_too_many_requests(msg: &str) -> HandlerError {
-    err(axum::http::StatusCode::TOO_MANY_REQUESTS, msg)
+pub fn err_too_many_requests(msg: &str) -> crate::error::AppError {
+    crate::error::AppError::TooManyRequests(msg.to_string())
 }
 
 pub fn err_created<T: serde::Serialize>(
@@ -467,33 +437,6 @@ pub fn err_created<T: serde::Serialize>(
         axum::http::StatusCode::CREATED,
         axum::Json(serde_json::json!({ "message": msg })),
     )
-}
-
-pub type ServiceError = (axum::http::StatusCode, serde_json::Value);
-
-#[must_use]
-pub fn svc_err(status: axum::http::StatusCode, message: &str) -> ServiceError {
-    (status, serde_json::json!({ "error": message }))
-}
-
-#[must_use]
-pub fn svc_err_internal(msg: &str) -> ServiceError {
-    svc_err(axum::http::StatusCode::INTERNAL_SERVER_ERROR, msg)
-}
-
-#[must_use]
-pub fn svc_err_not_found(msg: &str) -> ServiceError {
-    svc_err(axum::http::StatusCode::NOT_FOUND, msg)
-}
-
-#[must_use]
-pub fn svc_err_forbidden(msg: &str) -> ServiceError {
-    svc_err(axum::http::StatusCode::FORBIDDEN, msg)
-}
-
-#[must_use]
-pub fn svc_err_bad_request(msg: &str) -> ServiceError {
-    svc_err(axum::http::StatusCode::BAD_REQUEST, msg)
 }
 
 /// Validates that a string is a valid CSS color value.
@@ -590,7 +533,6 @@ pub fn is_valid_css_color(color: &str) -> bool {
 
 /// Validates that a font family value is safe (no CSS injection characters).
 /// Allows common font family names and safe CSS values.
-#[must_use]
 pub fn is_valid_font_family(font_family: &str) -> bool {
     // Empty string is valid
     if font_family.trim().is_empty() {
@@ -640,7 +582,6 @@ pub fn is_valid_font_family(font_family: &str) -> bool {
 }
 
 /// Validates that a text decoration value is safe (no CSS injection characters).
-#[must_use]
 pub fn is_valid_text_decoration(text_decoration: &str) -> bool {
     // Empty string is valid
     if text_decoration.trim().is_empty() {
@@ -670,7 +611,6 @@ const SUPPORTED_INPUT_TYPES: &[&str] = &["text", "int", "float"];
 /// Validates that an input type is supported.
 /// Must be one of the canonical types: text, int, float
 /// Empty strings are rejected.
-#[must_use]
 pub fn is_valid_input_type(input_type: &str) -> bool {
     let trimmed = input_type.trim();
 
@@ -715,6 +655,19 @@ pub fn validate_length_constraints(
     }
 
     Ok(())
+}
+
+/// Infers the MIME type of an image file based on magic bytes.
+pub fn infer_content_type(data: &[u8]) -> String {
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        "image/png".to_string()
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg".to_string()
+    } else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" {
+        "image/webp".to_string()
+    } else {
+        "application/octet-stream".to_string()
+    }
 }
 
 #[cfg(test)]

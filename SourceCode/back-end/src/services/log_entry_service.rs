@@ -1,17 +1,82 @@
 use crate::{
     AppState,
     db::{self, UserRecord},
+    error::AppError,
     logs_db,
 };
-use axum::http::StatusCode;
-use serde_json::json;
 use uuid::Uuid;
 
 #[cfg(test)]
 mod log_entry_service_tests {
-    #[tokio::test]
-    async fn test_log_entry_service_basic() {
-        assert!(true);
+    use super::*;
+    use chrono::Utc;
+
+    fn create_test_entry(user_id: &str, company_id: &str) -> logs_db::LogEntry {
+        logs_db::LogEntry {
+            entry_id: Uuid::new_v4().to_string(),
+            template_name: "test_template".to_string(),
+            company_id: company_id.to_string(),
+            branch_id: Some("branch_123".to_string()),
+            user_id: user_id.to_string(),
+            entry_data: serde_json::json!({}),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            submitted_at: None,
+            status: logs_db::LogStatus::Draft,
+            period: "2024-05".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_log_entry_creation_initializes_correctly() {
+        let user_id = "user_123";
+        let company_id = "company_456";
+        let entry = create_test_entry(user_id, company_id);
+
+        assert_eq!(entry.user_id, user_id);
+        assert_eq!(entry.company_id, company_id);
+        assert_eq!(entry.status, logs_db::LogStatus::Draft);
+        assert!(entry.submitted_at.is_none());
+        assert_eq!(entry.template_name, "test_template");
+    }
+
+    #[test]
+    fn test_log_entry_different_users_creates_unique_entries() {
+        let user1 = "user_1";
+        let user2 = "user_2";
+        let company_id = "company_789";
+
+        let entry1 = create_test_entry(user1, company_id);
+        let entry2 = create_test_entry(user2, company_id);
+
+        assert_ne!(entry1.entry_id, entry2.entry_id);
+        assert_ne!(entry1.user_id, entry2.user_id);
+        assert_eq!(entry1.company_id, entry2.company_id);
+    }
+
+    #[test]
+    fn test_log_entry_status_is_draft_on_creation() {
+        let user_id = "user_123";
+        let company_id = "company_456";
+        let entry = create_test_entry(user_id, company_id);
+
+        assert_eq!(entry.status, logs_db::LogStatus::Draft);
+    }
+
+    #[test]
+    fn test_log_entry_period_field_populated() {
+        let entry = create_test_entry("user_123", "company_456");
+
+        assert!(!entry.period.is_empty());
+        assert_eq!(entry.period, "2024-05");
+    }
+
+    #[test]
+    fn test_log_entry_unique_ids() {
+        let entry1 = create_test_entry("user_123", "company_456");
+        let entry2 = create_test_entry("user_123", "company_456");
+
+        assert_ne!(entry1.entry_id, entry2.entry_id);
     }
 }
 
@@ -27,32 +92,24 @@ impl LogEntryService {
         user: &UserRecord,
         template_name: &str,
         period: Option<&str>,
-    ) -> Result<String, (StatusCode, serde_json::Value)> {
-        let company_id = user.company_id.as_ref().ok_or((
-            StatusCode::FORBIDDEN,
-            json!({ "error": "User is not associated with a company" }),
+    ) -> Result<String, AppError> {
+        let company_id = user.company_id.as_ref().ok_or(AppError::Forbidden(
+            "User is not associated with a company".to_string(),
         ))?;
 
         let template = logs_db::get_template_by_name(&state.mongodb, template_name, company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get template: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get template" }),
-                )
+                AppError::Internal("Failed to get template".to_string())
             })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                json!({ "error": "Template not found" }),
-            ))?;
+            .ok_or(AppError::NotFound("Template not found".to_string()))?;
 
         match user.role {
             db::UserRole::BranchManager => {
                 if Some(template.branch_id.as_ref()) != Some(user.branch_id.as_ref()) {
-                    return Err((
-                        StatusCode::FORBIDDEN,
-                        json!({ "error": "Template is not available for your branch" }),
+                    return Err(AppError::Forbidden(
+                        "Template is not available for your branch".to_string(),
                     ));
                 }
             }
@@ -60,9 +117,8 @@ impl LogEntryService {
                 if !user.is_readonly_hq()
                     && Some(template.branch_id.as_ref()) != Some(user.branch_id.as_ref())
                 {
-                    return Err((
-                        StatusCode::FORBIDDEN,
-                        json!({ "error": "Template is not available for your branch" }),
+                    return Err(AppError::Forbidden(
+                        "Template is not available for your branch".to_string(),
                     ));
                 }
             }
@@ -82,21 +138,27 @@ impl LogEntryService {
                 ) {
                     Ok(normalized) => normalized,
                     Err(err) => {
-                        return Err((
-                            StatusCode::BAD_REQUEST,
-                            json!({ "error": match err {
-                                logs_db::PeriodValidationError::FormatInvalid => format!("Invalid period format for {} schedule", match template.schedule.frequency {
+                        return Err(AppError::BadRequest(match err {
+                            logs_db::PeriodValidationError::FormatInvalid => format!(
+                                "Invalid period format for {} schedule",
+                                match template.schedule.frequency {
                                     logs_db::Frequency::Daily => "daily",
                                     logs_db::Frequency::Weekly => "weekly",
                                     logs_db::Frequency::Monthly => "monthly",
                                     logs_db::Frequency::Quarterly => "quarterly",
                                     logs_db::Frequency::Yearly => "yearly",
-                                }),
-                                logs_db::PeriodValidationError::DueDateInFuture => "Period due date cannot be in the future".to_string(),
-                                logs_db::PeriodValidationError::WeekdayNotAllowed => "Period weekday is not allowed for this schedule".to_string(),
-                                logs_db::PeriodValidationError::BeforeTemplateCreation => "Period cannot be before template creation date".to_string(),
-                            }}),
-                        ));
+                                }
+                            ),
+                            logs_db::PeriodValidationError::DueDateInFuture => {
+                                "Period due date cannot be in the future".to_string()
+                            }
+                            logs_db::PeriodValidationError::WeekdayNotAllowed => {
+                                "Period weekday is not allowed for this schedule".to_string()
+                            }
+                            logs_db::PeriodValidationError::BeforeTemplateCreation => {
+                                "Period cannot be before template creation date".to_string()
+                            }
+                        }));
                     }
                 }
             }
@@ -112,17 +174,13 @@ impl LogEntryService {
         .await
         .map_err(|e| {
             tracing::error!("Failed to check for existing entries: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to check for existing entries" }),
-            )
+            AppError::Internal("Failed to check for existing entries".to_string())
         })?;
 
         if has_entry {
-            return Err((
-                StatusCode::CONFLICT,
-                json!({ "error": format!("A log entry for this template has already been created for period {}", period_to_use) }),
-            ));
+            return Err(AppError::Conflict(format!(
+                "A log entry for this template has already been created for period {period_to_use}"
+            )));
         }
 
         let entry_id = Uuid::new_v4().to_string();
@@ -146,10 +204,7 @@ impl LogEntryService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to create log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to create log entry" }),
-                )
+                AppError::Internal("Failed to create log entry".to_string())
             })?;
 
         Ok(entry_id)
@@ -163,38 +218,32 @@ impl LogEntryService {
         state: &AppState,
         user: &UserRecord,
         entry_id: &str,
-    ) -> Result<logs_db::LogEntry, (StatusCode, serde_json::Value)> {
+    ) -> Result<logs_db::LogEntry, AppError> {
         let entry = logs_db::get_log_entry(&state.mongodb, entry_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get log entry" }),
-                )
+                AppError::Internal("Failed to get log entry".to_string())
             })?
-            .ok_or((StatusCode::NOT_FOUND, json!({ "error": "Entry not found" })))?;
+            .ok_or(AppError::NotFound("Entry not found".to_string()))?;
 
         // Check if user owns the entry or has management permissions (including readonly HQ)
         if entry.user_id != user.id {
             // Allow if user can manage branch or is readonly HQ
             if !user.can_read_manage_branch() {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    json!({ "error": "You do not have permission to view this entry" }),
+                return Err(AppError::Forbidden(
+                    "You do not have permission to view this entry".to_string(),
                 ));
             }
 
             // Additional check: ensure entry belongs to same company
-            let user_company_id = user.company_id.as_ref().ok_or((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "User is not associated with a company" }),
+            let user_company_id = user.company_id.as_ref().ok_or(AppError::Forbidden(
+                "User is not associated with a company".to_string(),
             ))?;
 
             if &entry.company_id != user_company_id {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    json!({ "error": "You do not have permission to view this entry" }),
+                return Err(AppError::Forbidden(
+                    "You do not have permission to view this entry".to_string(),
                 ));
             }
         }
@@ -211,45 +260,29 @@ impl LogEntryService {
         user_id: &str,
         entry_id: &str,
         entry_data: &serde_json::Value,
-    ) -> Result<logs_db::LogEntry, (StatusCode, serde_json::Value)> {
+    ) -> Result<logs_db::LogEntry, AppError> {
         let entry = logs_db::get_log_entry(&state.mongodb, entry_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get log entry" }),
-                )
+                AppError::Internal("Failed to get log entry".to_string())
             })?
-            .ok_or((StatusCode::NOT_FOUND, json!({ "error": "Entry not found" })))?;
+            .ok_or(AppError::NotFound("Entry not found".to_string()))?;
 
         if entry.user_id != user_id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "You do not have permission to update this entry" }),
+            return Err(AppError::Forbidden(
+                "You do not have permission to update this entry".to_string(),
             ));
         }
 
-        logs_db::update_log_entry(&state.mongodb, entry_id, entry_data)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to update log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to update log entry" }),
-                )
-            })?;
-
-        let updated_entry = logs_db::get_log_entry(&state.mongodb, entry_id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to fetch updated log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to fetch updated entry" }),
-                )
-            })?
-            .ok_or((StatusCode::NOT_FOUND, json!({ "error": "Entry not found" })))?;
+        let updated_entry =
+            logs_db::update_log_entry_with_return(&state.mongodb, entry_id, entry_data)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to update log entry: {:?}", e);
+                    AppError::Internal("Failed to update log entry".to_string())
+                })?
+                .ok_or(AppError::NotFound("Entry not found".to_string()))?;
 
         Ok(updated_entry)
     }
@@ -262,22 +295,18 @@ impl LogEntryService {
         state: &AppState,
         user_id: &str,
         entry_id: &str,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         let entry = logs_db::get_log_entry(&state.mongodb, entry_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get log entry" }),
-                )
+                AppError::Internal("Failed to get log entry".to_string())
             })?
-            .ok_or((StatusCode::NOT_FOUND, json!({ "error": "Entry not found" })))?;
+            .ok_or(AppError::NotFound("Entry not found".to_string()))?;
 
         if entry.user_id != user_id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "You do not have permission to submit this entry" }),
+            return Err(AppError::Forbidden(
+                "You do not have permission to submit this entry".to_string(),
             ));
         }
 
@@ -285,10 +314,7 @@ impl LogEntryService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to submit log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to submit log entry" }),
-                )
+                AppError::Internal("Failed to submit log entry".to_string())
             })?;
 
         Ok(())
@@ -302,39 +328,31 @@ impl LogEntryService {
         state: &AppState,
         user: &UserRecord,
         entry_id: &str,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         let entry = logs_db::get_log_entry(&state.mongodb, entry_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get log entry" }),
-                )
+                AppError::Internal("Failed to get log entry".to_string())
             })?
-            .ok_or((StatusCode::NOT_FOUND, json!({ "error": "Entry not found" })))?;
+            .ok_or(AppError::NotFound("Entry not found".to_string()))?;
 
         let user_company_id = db::get_user_company_id(&state.postgres, &user.id)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching user company ID: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                AppError::Internal("Database error".to_string())
             })?;
 
         if let Some(company_id) = user_company_id {
             if entry.company_id != company_id && !user.is_logsmart_admin() {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    json!({ "error": "You do not have permission to unsubmit this entry" }),
+                return Err(AppError::Forbidden(
+                    "You do not have permission to unsubmit this entry".to_string(),
                 ));
             }
         } else if !user.is_logsmart_admin() {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "User is not associated with a company" }),
+            return Err(AppError::Forbidden(
+                "User is not associated with a company".to_string(),
             ));
         }
 
@@ -342,10 +360,7 @@ impl LogEntryService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to unsubmit log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to unsubmit log entry" }),
-                )
+                AppError::Internal("Failed to unsubmit log entry".to_string())
             })?;
 
         Ok(())
@@ -359,36 +374,30 @@ impl LogEntryService {
         state: &AppState,
         user: &UserRecord,
         entry_id: &str,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         let entry = logs_db::get_log_entry(&state.mongodb, entry_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get log entry" }),
-                )
+                AppError::Internal("Failed to get log entry".to_string())
             })?
-            .ok_or((StatusCode::NOT_FOUND, json!({ "error": "Entry not found" })))?;
+            .ok_or(AppError::NotFound("Entry not found".to_string()))?;
 
         if user.is_staff() && entry.user_id != user.id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "You may not delete log entries created by other users" }),
+            return Err(AppError::Forbidden(
+                "You may not delete log entries created by other users".to_string(),
             ));
         }
 
         if user.is_branch_manager() && entry.branch_id != user.branch_id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "You do not have permission to delete entries from another branch" }),
+            return Err(AppError::Forbidden(
+                "You do not have permission to delete entries from another branch".to_string(),
             ));
         }
 
         if user.is_company_manager() && Some(entry.company_id) != user.company_id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                json!({ "error": "You do not have permission to delete entries from another company" }),
+            return Err(AppError::Forbidden(
+                "You do not have permission to delete entries from another company".to_string(),
             ));
         }
 
@@ -396,10 +405,7 @@ impl LogEntryService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to delete log entry: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to delete log entry" }),
-                )
+                AppError::Internal("Failed to delete log entry".to_string())
             })?;
 
         Ok(())
@@ -413,35 +419,25 @@ impl LogEntryService {
         state: &AppState,
         company_id: &str,
         branch_id: Option<&str>,
-    ) -> Result<Vec<logs_db::TemplateDocument>, (StatusCode, serde_json::Value)> {
+    ) -> Result<Vec<logs_db::TemplateDocument>, AppError> {
         logs_db::get_templates_by_company_and_branch(&state.mongodb, company_id, branch_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get templates: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get templates" }),
-                )
+                AppError::Internal("Failed to get templates".to_string())
             })
     }
 
-    /// Retrieves all log entries for a user in a company.
-    ///
-    /// # Errors
-    /// Returns an error if the database query fails.
     pub async fn get_user_log_entries(
         state: &AppState,
         user_id: &str,
         company_id: &str,
-    ) -> Result<Vec<logs_db::LogEntry>, (StatusCode, serde_json::Value)> {
+    ) -> Result<Vec<logs_db::LogEntry>, AppError> {
         logs_db::get_user_log_entries(&state.mongodb, user_id, company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to get log entries: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to get log entries" }),
-                )
+                AppError::Internal("Failed to get log entries".to_string())
             })
     }
 }

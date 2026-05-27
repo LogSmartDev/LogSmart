@@ -12,7 +12,7 @@ use crate::{
     utils::AuditLogger,
 };
 use axum::{Json, extract::State, http::StatusCode};
-use serde_json::json;
+use validator::Validate;
 
 #[utoipa::path(
     post,
@@ -33,11 +33,18 @@ pub async fn create_branch(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     Json(payload): Json<CreateBranchRequest>,
-) -> Result<(StatusCode, Json<BranchDto>), (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.clone().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<(StatusCode, Json<BranchDto>), crate::error::AppError> {
+    // Validate request payload
+    payload
+        .validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     let branch = db::create_branch(
         &state.postgres,
@@ -47,11 +54,8 @@ pub async fn create_branch(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Failed to create branch: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to create branch" })),
-        )
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to create branch".to_string())
     })?;
 
     AuditLogger::log(
@@ -88,20 +92,19 @@ pub async fn create_branch(
 pub async fn list_branches(
     ReadCompanyUser(_claims, user): ReadCompanyUser,
     State(state): State<AppState>,
-) -> Result<Json<ListBranchesResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.clone().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<ListBranchesResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
     let branches =
         db::get_branches_by_company_id_with_deletion_status(&state.postgres, &company_id)
             .await
             .map_err(|e| {
-                tracing::error!("Database error fetching branches: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Database error" })),
-                )
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Database error".to_string())
             })?;
 
     Ok(Json(ListBranchesResponse {
@@ -129,47 +132,33 @@ pub async fn update_branch(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     Json(payload): Json<UpdateBranchRequest>,
-) -> Result<Json<BranchDto>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.clone().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<BranchDto>, crate::error::AppError> {
+    // Validate request payload
+    payload
+        .validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
 
-    // Validate branch name is not empty
-    if payload.name.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Branch name cannot be empty" })),
-        ));
-    }
-
-    // Validate address is not empty
-    if payload.address.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Branch address cannot be empty" })),
-        ));
-    }
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     // Verify the branch belongs to the user's company
     let branch = db::get_branch_by_id(&state.postgres, &payload.branch_id)
         .await
         .map_err(|e| {
-            tracing::error!("Database error fetching branch: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Database error" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Branch not found" })),
+        .ok_or(crate::error::AppError::NotFound(
+            "Branch not found".to_string(),
         ))?;
 
     if branch.company_id != company_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Branch does not belong to your company" })),
+        return Err(crate::error::AppError::Forbidden(
+            "Branch does not belong to your company".to_string(),
         ));
     }
 
@@ -181,11 +170,8 @@ pub async fn update_branch(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Failed to update branch: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to update branch" })),
-        )
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to update branch".to_string())
     })?;
 
     AuditLogger::log(
@@ -227,30 +213,27 @@ pub async fn request_branch_deletion(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     Json(payload): Json<RequestBranchDeletionRequest>,
-) -> Result<Json<RequestBranchDeletionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.as_ref().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<RequestBranchDeletionResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .as_ref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     let branch = db::get_branch_by_id(&state.postgres, &payload.branch_id)
         .await
         .map_err(|e| {
-            tracing::error!("Database error fetching branch: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Database error" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "Branch not found" })),
+        .ok_or(crate::error::AppError::NotFound(
+            "Branch not found".to_string(),
         ))?;
 
     if &branch.company_id != company_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Branch does not belong to your company" })),
+        return Err(crate::error::AppError::Forbidden(
+            "Branch does not belong to your company".to_string(),
         ));
     }
 
@@ -266,26 +249,21 @@ pub async fn request_branch_deletion(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Failed to create branch deletion token: {:?}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Failed to process deletion request" })),
-        )
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to process deletion request".to_string())
     })?;
 
     let confirmation_link = format!(
         "{}/confirm-branch-deletion?token={}",
-        "https://logsmart.app", token
+        std::env::var("FRONTEND_URL").unwrap_or_else(|_| "https://logsmart.app".to_string()),
+        token
     );
 
     email::send_branch_deletion_confirmation_email(&user.email, &branch.name, &confirmation_link)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to send branch deletion confirmation email: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to send confirmation email" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to send confirmation email".to_string())
         })?;
 
     AuditLogger::log(
@@ -326,30 +304,23 @@ pub async fn confirm_branch_deletion(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     Json(payload): Json<ConfirmBranchDeletionRequest>,
-) -> Result<Json<ConfirmBranchDeletionResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<ConfirmBranchDeletionResponse>, crate::error::AppError> {
     let token_record = db::get_branch_deletion_token(&state.postgres, &payload.token)
         .await
         .map_err(|e| {
-            tracing::error!("Database error fetching deletion token: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Database error" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Database error".to_string())
         })?;
 
-    let (token_id, user_id, branch_id) = token_record.ok_or((
-        StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": "Invalid or expired confirmation token" })),
-    ))?;
+    let (token_id, user_id, branch_id) = token_record.ok_or(
+        crate::error::AppError::Unauthorized("Invalid or expired confirmation token".to_string()),
+    )?;
 
     let branch = db::get_branch_by_id(&state.postgres, &branch_id)
         .await
         .map_err(|e| {
-            tracing::error!("Database error fetching branch: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Database error" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Database error".to_string())
         })?;
 
     let branch_name = match &branch {
@@ -360,21 +331,15 @@ pub async fn confirm_branch_deletion(
     db::delete_branch(&state.postgres, &branch_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to delete branch: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to delete branch" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to delete branch".to_string())
         })?;
 
     db::mark_branch_deletion_token_used(&state.postgres, &token_id)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to mark deletion token as used: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Failed to complete deletion" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Failed to complete deletion".to_string())
         })?;
 
     let user = db::get_user_by_id(&state.postgres, &user_id)

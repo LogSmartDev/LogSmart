@@ -15,7 +15,7 @@ pub fn exports_dir() -> PathBuf {
     std::env::var("EXPORT_DIR").map_or_else(|_| PathBuf::from("exports"), PathBuf::from)
 }
 
-fn safe_path(dir: &PathBuf, filename: &str) -> Result<PathBuf> {
+fn safe_path(dir: &Path, filename: &str) -> Result<PathBuf> {
     if filename.contains("..")
         || filename.contains('/')
         || filename.contains('\\')
