@@ -82,13 +82,17 @@ pub async fn get_security_logs_by_user(
     user_id: &str,
     limit: i64,
 ) -> Result<Vec<SecurityLog>, DbError> {
-    let logs = sqlx::query_as::<_, SecurityLog>(
-        &format!("{SECURITY_LOG_SELECT_COLUMNS}\n        WHERE user_id = $1\n        ORDER BY created_at DESC\n        LIMIT $2\n        "),
-    )
-    .bind(user_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(SECURITY_LOG_SELECT_COLUMNS);
+    query_builder.push("\nWHERE user_id = ");
+    query_builder.push_bind(user_id);
+    query_builder.push("\nORDER BY created_at DESC\nLIMIT ");
+    query_builder.push_bind(limit);
+    query_builder.push("\n");
+    
+    let logs = query_builder
+        .build_query_as::<SecurityLog>()
+        .fetch_all(pool)
+        .await?;
 
     Ok(logs)
 }
@@ -103,20 +107,27 @@ pub async fn get_recent_security_logs(
     limit: i64,
 ) -> Result<Vec<SecurityLog>, DbError> {
     let logs = if let Some(evt) = event_type {
-        sqlx::query_as::<_, SecurityLog>(
-            &format!("{SECURITY_LOG_SELECT_COLUMNS}\n            WHERE event_type = $1\n            ORDER BY created_at DESC\n            LIMIT $2\n            "),
-        )
-        .bind(evt)
-        .bind(limit)
-        .fetch_all(pool)
-        .await?
+        let mut query_builder = sqlx::QueryBuilder::new(SECURITY_LOG_SELECT_COLUMNS);
+        query_builder.push("\nWHERE event_type = ");
+        query_builder.push_bind(evt);
+        query_builder.push("\nORDER BY created_at DESC\nLIMIT ");
+        query_builder.push_bind(limit);
+        query_builder.push("\n");
+        
+        query_builder
+            .build_query_as::<SecurityLog>()
+            .fetch_all(pool)
+            .await?
     } else {
-        sqlx::query_as::<_, SecurityLog>(
-            &format!("{SECURITY_LOG_SELECT_COLUMNS}\n            ORDER BY created_at DESC\n            LIMIT $1\n            "),
-        )
-        .bind(limit)
-        .fetch_all(pool)
-        .await?
+        let mut query_builder = sqlx::QueryBuilder::new(SECURITY_LOG_SELECT_COLUMNS);
+        query_builder.push("\nORDER BY created_at DESC\nLIMIT ");
+        query_builder.push_bind(limit);
+        query_builder.push("\n");
+        
+        query_builder
+            .build_query_as::<SecurityLog>()
+            .fetch_all(pool)
+            .await?
     };
 
     Ok(logs)
@@ -286,8 +297,9 @@ pub async fn get_security_logs_page(
         "ORDER BY created_at DESC, id DESC\nLIMIT ${bind_count}"
     )?;
 
-    let mut query =
-        bind_security_log_filters(sqlx::query_as::<_, SecurityLog>(&query_str), filters);
+    let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(&query_str);
+    let mut query = query_builder.build_query_as::<SecurityLog>();
+    query = bind_security_log_filters(query, filters);
 
     if let Some((cursor_created_at, cursor_id)) = cursor_data {
         query = query.bind(cursor_created_at).bind(cursor_id);
@@ -336,7 +348,9 @@ pub async fn get_security_logs_for_export(
         "ORDER BY created_at DESC, id DESC\nLIMIT ${bind_count}"
     )?;
 
-    let query = bind_security_log_filters(sqlx::query_as::<_, SecurityLog>(&query_str), filters);
+    let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(&query_str);
+    let query = query_builder.build_query_as::<SecurityLog>();
+    let query = bind_security_log_filters(query, filters);
     let rows = query.bind(safe_limit).fetch_all(pool).await?;
     Ok(rows)
 }

@@ -51,14 +51,19 @@ pub async fn update_company_logo_id(
     company_id: &str,
     company_logo_id: Option<&str>,
 ) -> Result<Company, DbError> {
-    sqlx::query_as(
-        &format!("UPDATE companies\n        SET logo_id = $1\n        WHERE id = $2\n        {COMPANY_RETURNING_COLUMNS}\n        "),
-    )
-    .bind(company_logo_id)
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| DbError::Internal(format!("Failed to update company logo: {}", e)))
+    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET logo_id = ");
+    query_builder.push_bind(company_logo_id);
+    query_builder.push("\nWHERE id = ");
+    query_builder.push_bind(company_id);
+    query_builder.push("\n");
+    query_builder.push(COMPANY_RETURNING_COLUMNS);
+    query_builder.push("\n");
+    
+    query_builder
+        .build_query_as::<Company>()
+        .fetch_one(pool)
+        .await
+        .map_err(|e| DbError::Internal(format!("Failed to update company logo: {}", e)))
 }
 
 /// Retrieves a company by its ID.
@@ -90,15 +95,21 @@ pub async fn update_company(
     name: &str,
     address: &str,
 ) -> Result<Company, DbError> {
-    sqlx::query_as(
-        &format!("UPDATE companies\n        SET name = $1, address = $2\n        WHERE id = $3\n        {COMPANY_RETURNING_COLUMNS}\n        "),
-    )
-    .bind(name)
-    .bind(address)
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| DbError::Internal(format!("Failed to update company: {}", e)))
+    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET name = ");
+    query_builder.push_bind(name);
+    query_builder.push(", address = ");
+    query_builder.push_bind(address);
+    query_builder.push("\nWHERE id = ");
+    query_builder.push_bind(company_id);
+    query_builder.push("\n");
+    query_builder.push(COMPANY_RETURNING_COLUMNS);
+    query_builder.push("\n");
+    
+    query_builder
+        .build_query_as::<Company>()
+        .fetch_one(pool)
+        .await
+        .map_err(|e| DbError::Internal(format!("Failed to update company: {}", e)))
 }
 
 /// Marks company data as exported.
@@ -109,13 +120,17 @@ pub async fn mark_company_data_exported(
     pool: &PgPool,
     company_id: &str,
 ) -> Result<Company, DbError> {
-    sqlx::query_as(
-        &format!("UPDATE companies\n        SET data_exported_at = NOW()\n        WHERE id = $1\n        {COMPANY_RETURNING_COLUMNS}\n        "),
-    )
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| DbError::Internal(format!("Failed to mark company data as exported: {}", e)))
+    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET data_exported_at = NOW()\nWHERE id = ");
+    query_builder.push_bind(company_id);
+    query_builder.push("\n");
+    query_builder.push(COMPANY_RETURNING_COLUMNS);
+    query_builder.push("\n");
+    
+    query_builder
+        .build_query_as::<Company>()
+        .fetch_one(pool)
+        .await
+        .map_err(|e| DbError::Internal(format!("Failed to mark company data as exported: {}", e)))
 }
 
 /// Requests company deletion with a confirmation token.
@@ -128,15 +143,21 @@ pub async fn request_company_deletion(
     requester_email: &str,
 ) -> Result<Company, DbError> {
     let token = Uuid::new_v4().to_string();
-    sqlx::query_as(
-        &format!("UPDATE companies\n        SET deletion_requested_at = NOW(), deletion_token = $1, deletion_requested_by_email = $2\n        WHERE id = $3\n        {COMPANY_RETURNING_COLUMNS}\n        "),
-    )
-    .bind(&token)
-    .bind(requester_email)
-    .bind(company_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| DbError::Internal(format!("Failed to request company deletion: {}", e)))
+    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET deletion_requested_at = NOW(), deletion_token = ");
+    query_builder.push_bind(&token);
+    query_builder.push(", deletion_requested_by_email = ");
+    query_builder.push_bind(requester_email);
+    query_builder.push("\nWHERE id = ");
+    query_builder.push_bind(company_id);
+    query_builder.push("\n");
+    query_builder.push(COMPANY_RETURNING_COLUMNS);
+    query_builder.push("\n");
+    
+    query_builder
+        .build_query_as::<Company>()
+        .fetch_one(pool)
+        .await
+        .map_err(|e| DbError::Internal(format!("Failed to request company deletion: {}", e)))
 }
 
 /// Confirms company deletion with token.
@@ -148,14 +169,19 @@ pub async fn confirm_company_deletion(
     company_id: &str,
     token: &str,
 ) -> Result<Option<Company>, DbError> {
-    let company = sqlx::query_as(
-        &format!("UPDATE companies\n        SET deleted_at = NOW(), deletion_token = NULL, deletion_requested_at = NULL\n        WHERE id = $1 AND deletion_token = $2 AND deletion_requested_at IS NOT NULL AND deletion_requested_at > NOW() - INTERVAL '6 hours'\n        {COMPANY_RETURNING_COLUMNS}\n        "),
-    )
-    .bind(company_id)
-    .bind(token)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| DbError::Internal(format!("Failed to confirm company deletion: {}", e)))?;
+    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET deleted_at = NOW(), deletion_token = NULL, deletion_requested_at = NULL\nWHERE id = ");
+    query_builder.push_bind(company_id);
+    query_builder.push(" AND deletion_token = ");
+    query_builder.push_bind(token);
+    query_builder.push(" AND deletion_requested_at IS NOT NULL AND deletion_requested_at > NOW() - INTERVAL '6 hours'\n");
+    query_builder.push(COMPANY_RETURNING_COLUMNS);
+    query_builder.push("\n");
+    
+    let company = query_builder
+        .build_query_as::<Company>()
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| DbError::Internal(format!("Failed to confirm company deletion: {}", e)))?;
 
     Ok(company)
 }

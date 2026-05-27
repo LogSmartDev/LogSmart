@@ -18,14 +18,22 @@ pub async fn clock_in(
     company_id: &str,
 ) -> Result<ClockEvent, DbError> {
     let id = Uuid::new_v4().to_string();
-    let event = sqlx::query_as::<_, ClockEvent>(
-        &format!("INSERT INTO clock_events (id, user_id, company_id, clock_in)\n        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)\n        {CLOCK_EVENT_RETURNING}\n        "),
-    )
-    .bind(&id)
-    .bind(user_id)
-    .bind(company_id)
-    .fetch_one(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(
+        "INSERT INTO clock_events (id, user_id, company_id, clock_in)\n        VALUES ("
+    );
+    query_builder.push_bind(&id);
+    query_builder.push(", ");
+    query_builder.push_bind(user_id);
+    query_builder.push(", ");
+    query_builder.push_bind(company_id);
+    query_builder.push(", CURRENT_TIMESTAMP)\n        ");
+    query_builder.push(CLOCK_EVENT_RETURNING);
+    query_builder.push("\n        ");
+    
+    let event = query_builder
+        .build_query_as::<ClockEvent>()
+        .fetch_one(pool)
+        .await?;
 
     Ok(event)
 }
@@ -35,12 +43,18 @@ pub async fn clock_in(
 /// # Errors
 /// Returns an error if the database update fails.
 pub async fn clock_out(pool: &PgPool, user_id: &str) -> Result<Option<ClockEvent>, DbError> {
-    let event = sqlx::query_as::<_, ClockEvent>(
-        &format!("UPDATE clock_events\n        SET clock_out = CURRENT_TIMESTAMP\n        WHERE id = (\n            SELECT id FROM clock_events\n            WHERE user_id = $1 AND clock_out IS NULL\n            ORDER BY clock_in DESC\n            LIMIT 1\n        )\n        {CLOCK_EVENT_RETURNING}\n        "),
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(
+        "UPDATE clock_events\n        SET clock_out = CURRENT_TIMESTAMP\n        WHERE id = (\n            SELECT id FROM clock_events\n            WHERE user_id = "
+    );
+    query_builder.push_bind(user_id);
+    query_builder.push(" AND clock_out IS NULL\n            ORDER BY clock_in DESC\n            LIMIT 1\n        )\n        ");
+    query_builder.push(CLOCK_EVENT_RETURNING);
+    query_builder.push("\n        ");
+    
+    let event = query_builder
+        .build_query_as::<ClockEvent>()
+        .fetch_optional(pool)
+        .await?;
 
     Ok(event)
 }
@@ -55,13 +69,20 @@ pub async fn clock_out_at(
     user_id: &str,
     clock_out_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<Option<ClockEvent>, DbError> {
-    let event = sqlx::query_as::<_, ClockEvent>(
-        &format!("UPDATE clock_events\n        SET clock_out = $2\n        WHERE id = (\n            SELECT id FROM clock_events\n            WHERE user_id = $1 AND clock_out IS NULL\n            ORDER BY clock_in DESC\n            LIMIT 1\n        )\n        {CLOCK_EVENT_RETURNING}\n        "),
-    )
-    .bind(user_id)
-    .bind(clock_out_at)
-    .fetch_optional(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(
+        "UPDATE clock_events\n        SET clock_out = "
+    );
+    query_builder.push_bind(clock_out_at);
+    query_builder.push("\n        WHERE id = (\n            SELECT id FROM clock_events\n            WHERE user_id = ");
+    query_builder.push_bind(user_id);
+    query_builder.push(" AND clock_out IS NULL\n            ORDER BY clock_in DESC\n            LIMIT 1\n        )\n        ");
+    query_builder.push(CLOCK_EVENT_RETURNING);
+    query_builder.push("\n        ");
+    
+    let event = query_builder
+        .build_query_as::<ClockEvent>()
+        .fetch_optional(pool)
+        .await?;
 
     Ok(event)
 }
@@ -71,12 +92,15 @@ pub async fn clock_out_at(
 /// # Errors
 /// Returns an error if the database query fails.
 pub async fn get_clock_status(pool: &PgPool, user_id: &str) -> Result<Option<ClockEvent>, DbError> {
-    let event = sqlx::query_as::<_, ClockEvent>(
-        &format!("{CLOCK_EVENT_SELECT_COLUMNS}\n        WHERE user_id = $1\n        ORDER BY created_at DESC\n        LIMIT 1\n        "),
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(CLOCK_EVENT_SELECT_COLUMNS);
+    query_builder.push("\nWHERE user_id = ");
+    query_builder.push_bind(user_id);
+    query_builder.push("\nORDER BY created_at DESC\nLIMIT 1\n");
+    
+    let event = query_builder
+        .build_query_as::<ClockEvent>()
+        .fetch_optional(pool)
+        .await?;
 
     Ok(event)
 }
@@ -90,13 +114,17 @@ pub async fn get_recent_clock_events(
     user_id: &str,
     limit: i64,
 ) -> Result<Vec<ClockEvent>, DbError> {
-    let events = sqlx::query_as::<_, ClockEvent>(
-        &format!("{CLOCK_EVENT_SELECT_COLUMNS}\n        WHERE user_id = $1\n        ORDER BY created_at DESC\n        LIMIT $2\n        "),
-    )
-    .bind(user_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(CLOCK_EVENT_SELECT_COLUMNS);
+    query_builder.push("\nWHERE user_id = ");
+    query_builder.push_bind(user_id);
+    query_builder.push("\nORDER BY created_at DESC\nLIMIT ");
+    query_builder.push_bind(limit);
+    query_builder.push("\n");
+    
+    let events = query_builder
+        .build_query_as::<ClockEvent>()
+        .fetch_all(pool)
+        .await?;
 
     Ok(events)
 }
@@ -166,7 +194,9 @@ pub async fn get_company_clock_events(
     tracing::debug!("Clock events query: {}", query_str);
     tracing::debug!("Branch ID filter: {:?}", branch_id);
 
-    let mut query = sqlx::query_as::<_, CompanyClockEventRow>(&query_str).bind(company_id);
+    let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(&query_str);
+    let mut query = query_builder.build_query_as::<CompanyClockEventRow>();
+    query = query.bind(company_id);
 
     if let Some((cursor_time, cursor_id)) = &cursor {
         query = query.bind(cursor_time).bind(cursor_id);

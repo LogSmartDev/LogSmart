@@ -90,12 +90,15 @@ pub async fn get_user_company_id(pool: &PgPool, user_id: &str) -> Result<Option<
 /// # Errors
 /// Returns an error if database query fails.
 pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<UserRecord>, DbError> {
-    let user = sqlx::query_as::<_, UserRecord>(
-        &format!("{USER_SELECT_COLUMNS}\n        WHERE users.email = $1 AND users.deleted_at IS NULL\n        "),
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(USER_SELECT_COLUMNS);
+    query_builder.push("\nWHERE users.email = ");
+    query_builder.push_bind(email);
+    query_builder.push(" AND users.deleted_at IS NULL\n");
+    
+    let user = query_builder
+        .build_query_as::<UserRecord>()
+        .fetch_optional(pool)
+        .await?;
 
     Ok(user)
 }
@@ -105,12 +108,15 @@ pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User
 /// # Errors
 /// Returns an error if database query fails.
 pub async fn get_user_by_id(pool: &PgPool, id: &str) -> Result<Option<UserRecord>, DbError> {
-    let user = sqlx::query_as::<_, UserRecord>(&format!(
-        "{USER_SELECT_COLUMNS}\n        WHERE users.id = $1 AND users.deleted_at IS NULL\n        "
-    ))
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(USER_SELECT_COLUMNS);
+    query_builder.push("\nWHERE users.id = ");
+    query_builder.push_bind(id);
+    query_builder.push(" AND users.deleted_at IS NULL\n");
+    
+    let user = query_builder
+        .build_query_as::<UserRecord>()
+        .fetch_optional(pool)
+        .await?;
 
     if let Some(u) = &user {
         tracing::debug!(
@@ -135,13 +141,17 @@ pub async fn get_user_by_oauth(
     provider: &str,
     subject: &str,
 ) -> Result<Option<UserRecord>, DbError> {
-    let user = sqlx::query_as::<_, UserRecord>(
-        &format!("{USER_SELECT_COLUMNS}\n        WHERE users.oauth_provider = $1 AND users.oauth_subject = $2 AND users.deleted_at IS NULL\n        "),
-    )
-    .bind(provider)
-    .bind(subject)
-    .fetch_optional(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(USER_SELECT_COLUMNS);
+    query_builder.push("\nWHERE users.oauth_provider = ");
+    query_builder.push_bind(provider);
+    query_builder.push(" AND users.oauth_subject = ");
+    query_builder.push_bind(subject);
+    query_builder.push(" AND users.deleted_at IS NULL\n");
+    
+    let user = query_builder
+        .build_query_as::<UserRecord>()
+        .fetch_optional(pool)
+        .await?;
 
     Ok(user)
 }
@@ -309,12 +319,15 @@ pub async fn get_users_by_company_id(
     pool: &PgPool,
     company_id: &str,
 ) -> Result<Vec<UserRecord>, DbError> {
-    let users = sqlx::query_as::<_, UserRecord>(
-        &format!("{USER_SELECT_COLUMNS}\n        WHERE users.company_id = $1 AND users.deleted_at IS NULL\n        ")
-    )
-    .bind(company_id)
-    .fetch_all(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(USER_SELECT_COLUMNS);
+    query_builder.push("\nWHERE users.company_id = ");
+    query_builder.push_bind(company_id);
+    query_builder.push(" AND users.deleted_at IS NULL\n");
+    
+    let users = query_builder
+        .build_query_as::<UserRecord>()
+        .fetch_all(pool)
+        .await?;
 
     Ok(users)
 }
@@ -327,12 +340,15 @@ pub async fn get_all_users_by_company_id(
     pool: &PgPool,
     company_id: &str,
 ) -> Result<Vec<UserRecord>, DbError> {
-    let users = sqlx::query_as::<_, UserRecord>(&format!(
-        "{USER_SELECT_COLUMNS}\n        WHERE users.company_id = $1\n        "
-    ))
-    .bind(company_id)
-    .fetch_all(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(USER_SELECT_COLUMNS);
+    query_builder.push("\nWHERE users.company_id = ");
+    query_builder.push_bind(company_id);
+    query_builder.push("\n");
+    
+    let users = query_builder
+        .build_query_as::<UserRecord>()
+        .fetch_all(pool)
+        .await?;
 
     Ok(users)
 }

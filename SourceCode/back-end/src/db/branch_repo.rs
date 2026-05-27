@@ -101,12 +101,14 @@ pub async fn get_branches_by_company_id_with_deletion_status(
 /// # Errors
 /// Returns an error if database query fails.
 pub async fn get_branch_by_id(pool: &PgPool, branch_id: &str) -> Result<Option<Branch>, DbError> {
-    let branch = sqlx::query_as::<_, Branch>(&format!(
-        "{BRANCH_SELECT_COLUMNS}\n        WHERE id = $1\n        "
-    ))
-    .bind(branch_id)
-    .fetch_optional(pool)
-    .await?;
+    let mut query_builder = sqlx::QueryBuilder::new(BRANCH_SELECT_COLUMNS);
+    query_builder.push("\nWHERE id = ");
+    query_builder.push_bind(branch_id);
+    
+    let branch = query_builder
+        .build_query_as::<Branch>()
+        .fetch_optional(pool)
+        .await?;
 
     Ok(branch)
 }
