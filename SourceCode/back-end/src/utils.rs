@@ -390,32 +390,16 @@ fn first_ip_from_header(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
-fn is_production_env() -> bool {
-    let env = std::env::var("APP_ENV")
-        .or_else(|_| std::env::var("ENVIRONMENT"))
-        .or_else(|_| std::env::var("RUST_ENV"))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    env == "production" || env == "prod"
-}
-
 pub fn extract_optional_ip_from_headers_and_addr(
     headers: &HeaderMap,
     addr: Option<&std::net::SocketAddr>,
 ) -> Option<String> {
     let direct_ip = addr.map(|a| a.ip().to_string());
-
-    if is_production_env() {
-        first_ip_from_header(headers, "cf-connecting-ip")
-            .or_else(|| first_ip_from_header(headers, "true-client-ip"))
-            .or_else(|| first_ip_from_header(headers, "x-forwarded-for"))
-            .or_else(|| first_ip_from_header(headers, "x-real-ip"))
-            .or(direct_ip)
-    } else {
-        direct_ip
-            .or_else(|| first_ip_from_header(headers, "x-real-ip"))
-            .or_else(|| first_ip_from_header(headers, "cf-connecting-ip"))
-    }
+    first_ip_from_header(headers, "cf-connecting-ip")
+        .or_else(|| first_ip_from_header(headers, "true-client-ip"))
+        .or_else(|| first_ip_from_header(headers, "x-forwarded-for"))
+        .or_else(|| first_ip_from_header(headers, "x-real-ip"))
+        .or(direct_ip)
 }
 
 pub fn err_internal(msg: &str) -> crate::error::AppError {
