@@ -1,5 +1,5 @@
-use sqlx::PgPool;
 use crate::error::DbError;
+use sqlx::PgPool;
 
 use super::types::*;
 

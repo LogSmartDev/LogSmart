@@ -34,21 +34,30 @@ impl InvitationService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to check existing user: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
         {
-            return Err(crate::error::AppError::Conflict("User already registered" .to_string()));
+            return Err(crate::error::AppError::Conflict(
+                "User already registered".to_string(),
+            ));
         }
 
-        let company_id = admin.company_id.as_ref().ok_or(crate::error::AppError::Forbidden("Admin user is not associated with a company" .to_string()))?;
+        let company_id = admin
+            .company_id
+            .as_ref()
+            .ok_or(crate::error::AppError::Forbidden(
+                "Admin user is not associated with a company".to_string(),
+            ))?;
 
         let company_name = db::get_company_by_id(db_pool, company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to fetch company name: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
-            .ok_or(crate::error::AppError::NotFound("Company not found" .to_string()))?
+            .ok_or(crate::error::AppError::NotFound(
+                "Company not found".to_string(),
+            ))?
             .name;
 
         let token = generate_uuid6_token();
@@ -70,10 +79,10 @@ impl InvitationService {
                     "Duplicate invitation attempt for email: {}",
                     recipient_email
                 );
-                crate::error::AppError::Conflict("User already invited" .to_string())
+                crate::error::AppError::Conflict("User already invited".to_string())
             } else {
                 tracing::error!("Failed to create invitation: {:?}", e);
-                crate::error::AppError::Internal("Failed to create invitation" .to_string())
+                crate::error::AppError::Internal("Failed to create invitation".to_string())
             }
         })?;
 
@@ -87,7 +96,7 @@ impl InvitationService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to send invitation email: {:?}", e);
-                crate::error::AppError::Internal("Failed to send invitation email" .to_string())
+                crate::error::AppError::Internal("Failed to send invitation email".to_string())
             })?;
 
         AuditLogger::log_invitation_sent(
@@ -116,23 +125,25 @@ impl InvitationService {
     pub async fn accept_invitation(
         db_pool: &PgPool,
         token: &str,
-    ) -> Result<
-        (db::Invitation, chrono::DateTime<chrono::FixedOffset>),
-        crate::error::AppError,
-    > {
+    ) -> Result<(db::Invitation, chrono::DateTime<chrono::FixedOffset>), crate::error::AppError>
+    {
         let invitation = db::get_invitation_by_token(db_pool, token)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching invitation by token: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
-            .ok_or(crate::error::AppError::Unauthorized("Invalid or expired invitation" .to_string()))?;
+            .ok_or(crate::error::AppError::Unauthorized(
+                "Invalid or expired invitation".to_string(),
+            ))?;
 
         let now = chrono::Utc::now();
         let expires_at = invitation.expires_at.fixed_offset();
 
         if now > expires_at {
-            return Err(crate::error::AppError::Unauthorized("Invitation has expired" .to_string()));
+            return Err(crate::error::AppError::Unauthorized(
+                "Invitation has expired".to_string(),
+            ));
         }
 
         Ok((invitation, expires_at))
@@ -150,17 +161,21 @@ impl InvitationService {
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching invitation by token: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
-            .ok_or(crate::error::AppError::NotFound("Invitation not found" .to_string()))?;
+            .ok_or(crate::error::AppError::NotFound(
+                "Invitation not found".to_string(),
+            ))?;
 
         let company = db::get_company_by_id(db_pool, &invitation.company_id)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching company name: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
-            .ok_or(crate::error::AppError::NotFound("Company not found" .to_string()))?;
+            .ok_or(crate::error::AppError::NotFound(
+                "Company not found".to_string(),
+            ))?;
 
         Ok((company.name, invitation.expires_at))
     }
@@ -187,7 +202,7 @@ impl InvitationService {
         .await
         .map_err(|e| {
             tracing::error!("Failed to mark invitation as accepted: {:?}", e);
-            crate::error::AppError::Internal("Failed to accept invitation" .to_string())
+            crate::error::AppError::Internal("Failed to accept invitation".to_string())
         })?;
 
         Ok(())
@@ -205,7 +220,7 @@ impl InvitationService {
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching pending invitations: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })
     }
 
@@ -223,27 +238,35 @@ impl InvitationService {
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching invitation: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
-            .ok_or(crate::error::AppError::NotFound("Invitation not found" .to_string()))?;
+            .ok_or(crate::error::AppError::NotFound(
+                "Invitation not found".to_string(),
+            ))?;
 
         if calling_user.company_id.as_ref() != Some(&invitation.company_id) {
-            return Err(crate::error::AppError::Forbidden("Cannot cancel invitations from other companies" .to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Cannot cancel invitations from other companies".to_string(),
+            ));
         }
 
         if invitation.accepted_at.is_some() {
-            return Err(crate::error::AppError::BadRequest("Cannot cancel an accepted invitation" .to_string()));
+            return Err(crate::error::AppError::BadRequest(
+                "Cannot cancel an accepted invitation".to_string(),
+            ));
         }
 
         if invitation.cancelled_at.is_some() {
-            return Err(crate::error::AppError::BadRequest("Invitation already cancelled" .to_string()));
+            return Err(crate::error::AppError::BadRequest(
+                "Invitation already cancelled".to_string(),
+            ));
         }
 
         let cancelled_invitation = db::cancel_invitation(db_pool, invitation_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to cancel invitation: {:?}", e);
-                crate::error::AppError::Internal("Failed to cancel invitation" .to_string())
+                crate::error::AppError::Internal("Failed to cancel invitation".to_string())
             })?;
 
         email::send_invitation_cancelled_email(&cancelled_invitation.email)

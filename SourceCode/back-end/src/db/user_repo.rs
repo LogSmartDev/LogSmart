@@ -1,9 +1,9 @@
-use sqlx::PgPool;
 use crate::error::DbError;
+use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::types::*;
 use super::USER_SELECT_COLUMNS;
+use super::types::*;
 
 /// Creates a new user in the database.
 ///
@@ -105,9 +105,9 @@ pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User
 /// # Errors
 /// Returns an error if database query fails.
 pub async fn get_user_by_id(pool: &PgPool, id: &str) -> Result<Option<UserRecord>, DbError> {
-    let user = sqlx::query_as::<_, UserRecord>(
-        &format!("{USER_SELECT_COLUMNS}\n        WHERE users.id = $1 AND users.deleted_at IS NULL\n        "),
-    )
+    let user = sqlx::query_as::<_, UserRecord>(&format!(
+        "{USER_SELECT_COLUMNS}\n        WHERE users.id = $1 AND users.deleted_at IS NULL\n        "
+    ))
     .bind(id)
     .fetch_optional(pool)
     .await?;
@@ -251,7 +251,9 @@ pub async fn unlink_oauth_from_user(pool: &PgPool, user_id: &str) -> Result<(), 
     .await?;
 
     if query.rows_affected() == 0 {
-        return Err(DbError::Internal("Oauth account not found for user".to_string()));
+        return Err(DbError::Internal(
+            "Oauth account not found for user".to_string(),
+        ));
     }
     Ok(())
 }
@@ -280,7 +282,10 @@ pub async fn delete_user_by_email(pool: &PgPool, email: &str) -> Result<(), DbEr
 ///
 /// # Errors
 /// Returns an error if database update fails.
-pub async fn soft_delete_users_by_company_id(pool: &PgPool, company_id: &str) -> Result<(), DbError> {
+pub async fn soft_delete_users_by_company_id(
+    pool: &PgPool,
+    company_id: &str,
+) -> Result<(), DbError> {
     sqlx::query(
         r"
         UPDATE users
@@ -300,7 +305,10 @@ pub async fn soft_delete_users_by_company_id(pool: &PgPool, company_id: &str) ->
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_users_by_company_id(pool: &PgPool, company_id: &str) -> Result<Vec<UserRecord>, DbError> {
+pub async fn get_users_by_company_id(
+    pool: &PgPool,
+    company_id: &str,
+) -> Result<Vec<UserRecord>, DbError> {
     let users = sqlx::query_as::<_, UserRecord>(
         &format!("{USER_SELECT_COLUMNS}\n        WHERE users.company_id = $1 AND users.deleted_at IS NULL\n        ")
     )
@@ -319,9 +327,9 @@ pub async fn get_all_users_by_company_id(
     pool: &PgPool,
     company_id: &str,
 ) -> Result<Vec<UserRecord>, DbError> {
-    let users = sqlx::query_as::<_, UserRecord>(
-        &format!("{USER_SELECT_COLUMNS}\n        WHERE users.company_id = $1\n        ")
-    )
+    let users = sqlx::query_as::<_, UserRecord>(&format!(
+        "{USER_SELECT_COLUMNS}\n        WHERE users.company_id = $1\n        "
+    ))
     .bind(company_id)
     .fetch_all(pool)
     .await?;
@@ -333,7 +341,10 @@ pub async fn get_all_users_by_company_id(
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_company_members_for_user(pool: &PgPool, user_id: &str) -> Result<Vec<UserRecord>, DbError> {
+pub async fn get_company_members_for_user(
+    pool: &PgPool,
+    user_id: &str,
+) -> Result<Vec<UserRecord>, DbError> {
     tracing::info!("DB: Fetching members for user_id: {}", user_id);
     let users = sqlx::query_as::<_, UserRecord>(
         r"

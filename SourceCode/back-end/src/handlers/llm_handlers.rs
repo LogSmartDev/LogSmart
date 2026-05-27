@@ -27,11 +27,15 @@ pub async fn generate_layout(
     Json(req): Json<LayoutGenerationRequest>,
 ) -> Result<impl IntoResponse, crate::error::AppError> {
     if req.user_prompt.trim().is_empty() {
-        return Err(crate::error::AppError::BadRequest("User prompt cannot be empty".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "User prompt cannot be empty".to_string(),
+        ));
     }
 
     if req.user_prompt.len() > 1000 {
-        return Err(crate::error::AppError::BadRequest("User prompt is too long (max 1000 characters)".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "User prompt is too long (max 1000 characters)".to_string(),
+        ));
     }
 
     match llm::generate_layout(req).await {
@@ -43,8 +47,9 @@ pub async fn generate_layout(
         )),
         Err(e) => {
             tracing::error!("LLM generation error: {}", e);
-            Err(crate::error::AppError::Internal("Failed to generate layout"
-                .to_string()))
+            Err(crate::error::AppError::Internal(
+                "Failed to generate layout".to_string(),
+            ))
         }
     }
 }

@@ -50,8 +50,7 @@ pub async fn list_due_forms_today(
 
     let templates =
         services::LogEntryService::list_due_forms(&state, &company_id, user.branch_id.as_deref())
-            .await
-            ?;
+            .await?;
 
     let now = chrono::Utc::now();
 
@@ -67,9 +66,9 @@ pub async fn list_due_forms_today(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+    })?;
 
     // Now compute missed periods using actual last submitted periods
     let mut template_due_counts: HashMap<String, usize> = HashMap::new();
@@ -124,9 +123,9 @@ pub async fn list_due_forms_today(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+    })?;
 
     let mut due_forms = Vec::new();
     let mut seen_forms: HashSet<(String, String)> = HashSet::new();
@@ -212,9 +211,9 @@ pub async fn list_due_forms_today(
             )
             .await
             .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
-        })?;
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+            })?;
 
             // Single batch query for all draft entries
             let draft_map = logs_db::get_draft_entries_batch(
@@ -225,15 +224,20 @@ pub async fn list_due_forms_today(
             )
             .await
             .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
-        })?;
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to retrieve due forms".to_string())
+            })?;
 
             for template in due_today_templates {
-                let has_submitted = submitted_map.get(&template.template_name).copied().unwrap_or(false);
+                let has_submitted = submitted_map
+                    .get(&template.template_name)
+                    .copied()
+                    .unwrap_or(false);
 
                 if !has_submitted {
-                    let draft_entry = draft_map.get(&template.template_name).and_then(|e| e.clone());
+                    let draft_entry = draft_map
+                        .get(&template.template_name)
+                        .and_then(|e| e.clone());
 
                     let last_submitted = latest_submitted_entries
                         .get(&template.template_name)
@@ -255,8 +259,11 @@ pub async fn list_due_forms_today(
                     }
                     seen_forms.insert(form_key);
 
-                    let status =
-                        logs_db::get_availability_status_for_period(&template.schedule, &period, now);
+                    let status = logs_db::get_availability_status_for_period(
+                        &template.schedule,
+                        &period,
+                        now,
+                    );
 
                     let derived_draft_status = draft_entry.as_ref().map(|e| {
                         logs_db::derive_log_status(e.status, &template.schedule, &period, now)
@@ -311,7 +318,9 @@ pub async fn create_log_entry(
     Json(payload): Json<CreateLogEntryRequest>,
 ) -> Result<(StatusCode, Json<CreateLogEntryResponse>), crate::error::AppError> {
     if payload.template_name.is_empty() {
-        return Err(crate::error::AppError::BadRequest("Template name is required".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "Template name is required".to_string(),
+        ));
     }
 
     let entry_id = services::LogEntryService::create_log_entry(
@@ -320,8 +329,7 @@ pub async fn create_log_entry(
         &payload.template_name,
         payload.period.as_deref(),
     )
-    .await
-    ?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -354,9 +362,7 @@ pub async fn get_log_entry(
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
 ) -> Result<Json<LogEntryResponse>, crate::error::AppError> {
-    let entry = services::LogEntryService::get_log_entry(&state, &user, &entry_id)
-        .await
-        ?;
+    let entry = services::LogEntryService::get_log_entry(&state, &user, &entry_id).await?;
 
     let company_id = user.company_id_or_forbidden()?;
 
@@ -366,7 +372,9 @@ pub async fn get_log_entry(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Failed to get template".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Template not found".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Template not found".to_string(),
+        ))?;
 
     let processed_layout = logs_db::process_template_layout_with_period_string(
         &template.template_layout,
@@ -423,8 +431,7 @@ pub async fn update_log_entry(
         &entry_id,
         &payload.entry_data,
     )
-    .await
-    ?;
+    .await?;
 
     let company_id = user.company_id_or_forbidden()?;
 
@@ -432,10 +439,12 @@ pub async fn update_log_entry(
         logs_db::get_template_by_name(&state.mongodb, &updated_entry.template_name, &company_id)
             .await
             .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to get template".to_string())
-        })?
-            .ok_or(crate::error::AppError::NotFound("Template not found".to_string()))?;
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to get template".to_string())
+            })?
+            .ok_or(crate::error::AppError::NotFound(
+                "Template not found".to_string(),
+            ))?;
 
     let processed_layout = logs_db::process_template_layout_with_period_string(
         &template.template_layout,
@@ -484,9 +493,7 @@ pub async fn submit_log_entry(
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
 ) -> Result<Json<SubmitLogEntryResponse>, crate::error::AppError> {
-    services::LogEntryService::submit_log_entry(&state, &user.id, &entry_id)
-        .await
-        ?;
+    services::LogEntryService::submit_log_entry(&state, &user.id, &entry_id).await?;
 
     Ok(Json(SubmitLogEntryResponse {
         message: "Log entry submitted successfully.".to_string(),
@@ -515,9 +522,7 @@ pub async fn unsubmit_log_entry(
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
 ) -> Result<Json<SubmitLogEntryResponse>, crate::error::AppError> {
-    services::LogEntryService::unsubmit_log_entry(&state, &user, &entry_id)
-        .await
-        ?;
+    services::LogEntryService::unsubmit_log_entry(&state, &user, &entry_id).await?;
 
     Ok(Json(SubmitLogEntryResponse {
         message: "Log entry returned to draft successfully.".to_string(),
@@ -546,9 +551,7 @@ pub async fn delete_log_entry(
     State(state): State<AppState>,
     axum::extract::Path(entry_id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, crate::error::AppError> {
-    services::LogEntryService::delete_log_entry(&state, &user, &entry_id)
-        .await
-        ?;
+    services::LogEntryService::delete_log_entry(&state, &user, &entry_id).await?;
 
     Ok(Json(json!({ "message": "Log entry deleted successfully" })))
 }
@@ -574,7 +577,12 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String, S>>,
 ) -> Result<Json<ListLogEntriesResponse>, crate::error::AppError> {
-    let company_id = user.company_id.clone().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     // Parse optional branch_ids parameter (comma-separated)
     let branch_ids_param = params.get("branch_ids");
@@ -596,13 +604,18 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
         }
     } else {
         // Branch manager - only their branch
-        let branch_id = user.branch_id.as_ref().ok_or(crate::error::AppError::Forbidden("Branch manager has no branch assigned".to_string()))?;
+        let branch_id = user
+            .branch_id
+            .as_ref()
+            .ok_or(crate::error::AppError::Forbidden(
+                "Branch manager has no branch assigned".to_string(),
+            ))?;
         logs_db::get_branch_log_entries(&state.mongodb, &company_id, branch_id).await
     }
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to get log entries".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to get log entries".to_string())
+    })?;
 
     let mut response_entries = Vec::new();
 
@@ -685,9 +698,7 @@ pub async fn list_user_log_entries(
     let company_id = user.company_id_or_forbidden()?;
 
     let mut entries =
-        services::LogEntryService::get_user_log_entries(&state, &user.id, &company_id)
-            .await
-            ?;
+        services::LogEntryService::get_user_log_entries(&state, &user.id, &company_id).await?;
 
     if let Some(template_name) = params.get("template_name") {
         entries.retain(|e| e.template_name == *template_name);
@@ -778,7 +789,9 @@ pub async fn create_report_run(
     let company_id = user.company_id_or_forbidden()?;
 
     if payload.params.date_from_iso.is_empty() || payload.params.date_to_iso.is_empty() {
-        return Err(crate::error::AppError::BadRequest("date_from_iso and date_to_iso are required".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "date_from_iso and date_to_iso are required".to_string(),
+        ));
     }
 
     payload.params = logs_db::normalize_report_params(&payload.params);
@@ -858,9 +871,9 @@ pub async fn list_report_runs(
     for run in runs {
         let key = if run.params_key.is_empty() {
             logs_db::report_params_key(&run.params).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to list report runs".to_string())
-        })?
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Failed to list report runs".to_string())
+            })?
         } else {
             run.params_key.clone()
         };
@@ -915,7 +928,9 @@ pub async fn use_report_run(
         })?;
 
     if !touched {
-        return Err(crate::error::AppError::NotFound("Report run not found".to_string()));
+        return Err(crate::error::AppError::NotFound(
+            "Report run not found".to_string(),
+        ));
     }
 
     Ok(Json(UseReportRunResponse {
@@ -964,7 +979,7 @@ pub async fn delete_report_run(
                 company_id,
                 e
             );
-            crate::error::AppError::Internal("Failed to delete report run" .to_string())
+            crate::error::AppError::Internal("Failed to delete report run".to_string())
         })?;
 
     if !deleted {
@@ -975,7 +990,9 @@ pub async fn delete_report_run(
             user.id,
             company_id
         );
-        return Err(crate::error::AppError::NotFound("Report run not found".to_string()));
+        return Err(crate::error::AppError::NotFound(
+            "Report run not found".to_string(),
+        ));
     }
 
     tracing::info!(

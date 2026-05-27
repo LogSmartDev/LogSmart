@@ -131,7 +131,7 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to fetch JWKs: {:?}", e);
-                crate::error::AppError::Internal("Failed to fetch signing keys" .to_string())
+                crate::error::AppError::Internal("Failed to fetch signing keys".to_string())
             })?;
 
         {
@@ -164,7 +164,7 @@ impl GoogleOAuthClient {
             .exchange_code(AuthorizationCode::new(code))
             .map_err(|e| {
                 tracing::error!("Invalid authorization code: {:?}", e);
-                crate::error::AppError::BadRequest("Invalid authorization code" .to_string())
+                crate::error::AppError::BadRequest("Invalid authorization code".to_string())
             })?;
 
         let token_response = token_request
@@ -172,12 +172,14 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to exchange OAuth code: {:?}", e);
-                crate::error::AppError::Internal("Failed to exchange authorization code" .to_string())
+                crate::error::AppError::Internal(
+                    "Failed to exchange authorization code".to_string(),
+                )
             })?;
 
         let id_token = token_response.id_token().ok_or_else(|| {
             tracing::error!("No ID token in OAuth response");
-            crate::error::AppError::Internal("No ID token received from Google" .to_string())
+            crate::error::AppError::Internal("No ID token received from Google".to_string())
         })?;
 
         let nonce = Nonce::new(nonce);
@@ -200,12 +202,14 @@ impl GoogleOAuthClient {
                 );
                 id_token.claims(&refreshed_verifier, &nonce).map_err(|e| {
                     tracing::error!("Failed to verify ID token after JWK refresh: {:?}", e);
-                    crate::error::AppError::Unauthorized("Failed to verify ID token" .to_string())
+                    crate::error::AppError::Unauthorized("Failed to verify ID token".to_string())
                 })?
             }
             Err(e) => {
                 tracing::error!("Failed to verify ID token: {:?}", e);
-                return Err(crate::error::AppError::Unauthorized("Failed to verify ID token" .to_string()));
+                return Err(crate::error::AppError::Unauthorized(
+                    "Failed to verify ID token".to_string(),
+                ));
             }
         };
 
@@ -214,7 +218,7 @@ impl GoogleOAuthClient {
             .map(|e| e.as_str().to_string())
             .ok_or_else(|| {
                 tracing::error!("No email in ID token claims");
-                crate::error::AppError::BadRequest("Email not provided by Google" .to_string())
+                crate::error::AppError::BadRequest("Email not provided by Google".to_string())
             })?;
 
         let given_name = claims
@@ -267,7 +271,7 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Database error checking OAuth user: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
         {
             tracing::info!(
@@ -294,7 +298,9 @@ impl GoogleOAuthClient {
             .await;
 
             if existing_user.company_deleted_at.is_some() {
-                return Err(crate::error::AppError::Unauthorized("Your company has been deleted. Please contact support.".to_string()));
+                return Err(crate::error::AppError::Unauthorized(
+                    "Your company has been deleted. Please contact support.".to_string(),
+                ));
             }
             return Ok(existing_user);
         }
@@ -309,7 +315,7 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Database error checking email: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
         {
             return Err(crate::error::AppError::Conflict("An account with this email already exists. Please login with your password or link your Google account in settings.".to_string()));
@@ -333,7 +339,7 @@ impl GoogleOAuthClient {
         .await
         .map_err(|e| {
             tracing::error!("Failed to create OAuth user: {:?}", e);
-            crate::error::AppError::Internal("Failed to create user account" .to_string())
+            crate::error::AppError::Internal("Failed to create user account".to_string())
         })?;
 
         AuditLogger::log_oauth_login(
@@ -377,11 +383,13 @@ impl GoogleOAuthClient {
             .await
             .map_err(|e| {
                 tracing::error!("Database error: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             })?
             .is_some()
         {
-            return Err(crate::error::AppError::Conflict("This Google account is already linked to another user" .to_string()));
+            return Err(crate::error::AppError::Conflict(
+                "This Google account is already linked to another user".to_string(),
+            ));
         }
 
         db::link_oauth_to_user(
@@ -394,7 +402,7 @@ impl GoogleOAuthClient {
         .await
         .map_err(|e| {
             tracing::error!("Failed to link OAuth account: {:?}", e);
-            crate::error::AppError::Internal("Failed to link account" .to_string())
+            crate::error::AppError::Internal("Failed to link account".to_string())
         })?;
 
         tracing::info!(
@@ -409,14 +417,11 @@ impl GoogleOAuthClient {
     ///
     /// # Errors
     /// Returns an error if token generation fails.
-    pub fn generate_jwt_for_user(
-        &self,
-        user_id: &str,
-    ) -> Result<String, crate::error::AppError> {
+    pub fn generate_jwt_for_user(&self, user_id: &str) -> Result<String, crate::error::AppError> {
         let jwt_config = JwtManager::get_config();
         jwt_config.generate_token(user_id, 24).map_err(|e| {
             tracing::error!("Failed to generate JWT token: {:?}", e);
-            crate::error::AppError::Internal("Failed to generate token" .to_string())
+            crate::error::AppError::Internal("Failed to generate token".to_string())
         })
     }
 }

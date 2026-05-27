@@ -43,7 +43,7 @@ pub async fn get_security_logs(
         Some(cursor) => match db::parse_security_logs_cursor(cursor) {
             Ok(parsed) => Some(parsed),
             Err(_) => {
-                return crate::error::AppError::BadRequest("Invalid cursor" .to_string())
+                return crate::error::AppError::BadRequest("Invalid cursor".to_string())
                     .into_response();
             }
         },
@@ -53,14 +53,14 @@ pub async fn get_security_logs(
     let created_from = match parse_optional_utc_datetime(params.created_from.as_deref()) {
         Ok(value) => value,
         Err(err) => {
-            return crate::error::AppError::BadRequest(err .to_string()).into_response();
+            return crate::error::AppError::BadRequest(err.to_string()).into_response();
         }
     };
 
     let created_to = match parse_optional_utc_datetime(params.created_to.as_deref()) {
         Ok(value) => value,
         Err(err) => {
-            return crate::error::AppError::BadRequest(err .to_string()).into_response();
+            return crate::error::AppError::BadRequest(err.to_string()).into_response();
         }
     };
 
@@ -117,14 +117,14 @@ pub async fn export_security_logs_csv(
     let created_from = match parse_optional_utc_datetime(params.created_from.as_deref()) {
         Ok(value) => value,
         Err(err) => {
-            return crate::error::AppError::BadRequest(err .to_string()).into_response();
+            return crate::error::AppError::BadRequest(err.to_string()).into_response();
         }
     };
 
     let created_to = match parse_optional_utc_datetime(params.created_to.as_deref()) {
         Ok(value) => value,
         Err(err) => {
-            return crate::error::AppError::BadRequest(err .to_string()).into_response();
+            return crate::error::AppError::BadRequest(err.to_string()).into_response();
         }
     };
 
@@ -155,7 +155,8 @@ pub async fn export_security_logs_csv(
     {
         Ok(rows) => rows,
         Err(e) => {
-            return utils::err_internal(&format!("Failed to export security logs: {e}")).into_response();
+            return utils::err_internal(&format!("Failed to export security logs: {e}"))
+                .into_response();
         }
     };
 
@@ -192,7 +193,7 @@ pub async fn export_security_logs_csv(
     let disposition = match HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
         Ok(value) => value,
         Err(_) => {
-            return crate::error::AppError::Internal("Failed to build export response" .to_string())
+            return crate::error::AppError::Internal("Failed to build export response".to_string())
                 .into_response();
         }
     };

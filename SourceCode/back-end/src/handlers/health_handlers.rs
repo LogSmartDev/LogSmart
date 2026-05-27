@@ -71,7 +71,9 @@ pub async fn get_db_health(
             metrics,
         })
         .into_response(),
-        Err(e) => utils::err_internal(&format!("Failed to get health metrics: {e}")).into_response(),
+        Err(e) => {
+            utils::err_internal(&format!("Failed to get health metrics: {e}")).into_response()
+        }
     }
 }
 
@@ -133,7 +135,8 @@ pub async fn get_db_index_usage(
     let unused = match db::check_unused_indexes(&state.postgres).await {
         Ok(un) => un,
         Err(e) => {
-            return utils::err_internal(&format!("Failed to check unused indexes: {e}")).into_response();
+            return utils::err_internal(&format!("Failed to check unused indexes: {e}"))
+                .into_response();
         }
     };
 

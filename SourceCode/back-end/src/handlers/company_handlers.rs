@@ -41,7 +41,9 @@ pub async fn upload_company_logo(
     body: Bytes,
 ) -> Result<impl axum::response::IntoResponse, crate::error::AppError> {
     if user.company_id.as_ref() != Some(&company_id) {
-        return Err(crate::error::AppError::Forbidden("You can only manage your own company's logo".to_string()));
+        return Err(crate::error::AppError::Forbidden(
+            "You can only manage your own company's logo".to_string(),
+        ));
     }
 
     let file_id = crate::services::CompanyService::upload_company_logo(
@@ -311,7 +313,9 @@ pub async fn export_company_data(
         .ok_or_else(|| err_not_found("Company not found"))?;
 
     if !state.rate_limit.check_export(&company_id) {
-        return Err(crate::error::AppError::TooManyRequests("You can only export once per week. Please try again later.".to_string()));
+        return Err(crate::error::AppError::TooManyRequests(
+            "You can only export once per week. Please try again later.".to_string(),
+        ));
     }
 
     let company_email = user.email.clone();

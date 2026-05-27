@@ -34,7 +34,9 @@ impl ClockService {
         if let Some(ref event) = current
             && event.is_clocked_in()
         {
-            return Err(crate::error::AppError::Conflict("You are already clocked in".to_string()));
+            return Err(crate::error::AppError::Conflict(
+                "You are already clocked in".to_string(),
+            ));
         }
 
         let event = db::clock_in(pool, user_id, company_id).await.map_err(|e| {
@@ -59,11 +61,15 @@ impl ClockService {
         })?;
 
         let Some(current_event) = current else {
-            return Err(crate::error::AppError::BadRequest("You are not currently clocked in".to_string()));
+            return Err(crate::error::AppError::BadRequest(
+                "You are not currently clocked in".to_string(),
+            ));
         };
 
         if !current_event.is_clocked_in() {
-            return Err(crate::error::AppError::BadRequest("You are not currently clocked in".to_string()));
+            return Err(crate::error::AppError::BadRequest(
+                "You are not currently clocked in".to_string(),
+            ));
         }
 
         let now = Utc::now();
@@ -76,7 +82,9 @@ impl ClockService {
                 crate::error::AppError::Internal("Failed to clock out".to_string())
             })?;
 
-        event.ok_or(crate::error::AppError::BadRequest("You are not currently clocked in".to_string()))
+        event.ok_or(crate::error::AppError::BadRequest(
+            "You are not currently clocked in".to_string(),
+        ))
     }
 
     /// Gets the current clock status and recent events for a user.
@@ -86,8 +94,7 @@ impl ClockService {
     pub async fn get_status(
         pool: &PgPool,
         user_id: &str,
-    ) -> Result<(Option<db::ClockEvent>, Vec<db::ClockEvent>), crate::error::AppError>
-    {
+    ) -> Result<(Option<db::ClockEvent>, Vec<db::ClockEvent>), crate::error::AppError> {
         let current = db::get_clock_status(pool, user_id).await.map_err(|e| {
             tracing::error!("Database error fetching clock status: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
@@ -111,8 +118,7 @@ impl ClockService {
         branch_id: Option<String>,
         limit: Option<i64>,
         cursor: Option<String>,
-    ) -> Result<(Vec<db::CompanyClockEventRow>, Option<String>), crate::error::AppError>
-    {
+    ) -> Result<(Vec<db::CompanyClockEventRow>, Option<String>), crate::error::AppError> {
         let (events, next_cursor) =
             db::get_company_clock_events(pool, company_id, from, to, branch_id, limit, cursor)
                 .await

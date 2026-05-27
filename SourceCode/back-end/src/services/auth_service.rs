@@ -230,7 +230,8 @@ impl AuthService {
 
             let reset_link = format!(
                 "{}/reset-password?token={}",
-                std::env::var("FRONTEND_URL").unwrap_or_else(|_| "https://logsmart.app".to_string()),
+                std::env::var("FRONTEND_URL")
+                    .unwrap_or_else(|_| "https://logsmart.app".to_string()),
                 reset_token
             );
 

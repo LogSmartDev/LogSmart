@@ -68,7 +68,10 @@ pub async fn get_template_version(
         "version": u32::from(version),
     };
 
-    db.template_versions().find_one(filter).await.map_err(Into::into)
+    db.template_versions()
+        .find_one(filter)
+        .await
+        .map_err(Into::into)
 }
 
 /// Retrieves a log template by its name and company ID.

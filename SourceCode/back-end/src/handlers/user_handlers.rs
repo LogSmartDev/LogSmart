@@ -7,7 +7,10 @@ use crate::{
     images_db,
     middleware::{AnyAuthUser, AuditRequestContext, BranchManagerUser, ReadBranchUser},
     services::user_service::UserService,
-    utils::{AuditLogger, err_bad_request, err_forbidden, err_internal, err_not_found, infer_content_type},
+    utils::{
+        AuditLogger, err_bad_request, err_forbidden, err_internal, err_not_found,
+        infer_content_type,
+    },
 };
 use axum::{
     Json,

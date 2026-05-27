@@ -1,12 +1,12 @@
-use std::fmt::Write;
 use crate::error::DbError;
+use std::fmt::Write;
 
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::types::*;
 use super::SECURITY_LOG_SELECT_COLUMNS;
-use super::{encode_cursor, decode_cursor};
+use super::types::*;
+use super::{decode_cursor, encode_cursor};
 
 /// Logs a security event to the database.
 ///
@@ -266,7 +266,9 @@ pub async fn get_security_logs_page(
 
     build_security_log_filter_conditions(&mut query_str, &mut bind_count, filters)?;
 
-    let cursor_data = cursor.as_ref().map(|(created_at, id)| (created_at, id.clone()));
+    let cursor_data = cursor
+        .as_ref()
+        .map(|(created_at, id)| (created_at, id.clone()));
     if let Some((_cursor_created_at, _cursor_id)) = &cursor_data {
         bind_count += 1;
         let cursor_created_at_bind = bind_count;
@@ -284,7 +286,8 @@ pub async fn get_security_logs_page(
         "ORDER BY created_at DESC, id DESC\nLIMIT ${bind_count}"
     )?;
 
-    let mut query = bind_security_log_filters(sqlx::query_as::<_, SecurityLog>(&query_str), filters);
+    let mut query =
+        bind_security_log_filters(sqlx::query_as::<_, SecurityLog>(&query_str), filters);
 
     if let Some((cursor_created_at, cursor_id)) = cursor_data {
         query = query.bind(cursor_created_at).bind(cursor_id);
@@ -343,7 +346,9 @@ pub fn format_security_logs_cursor(created_at: chrono::DateTime<chrono::Utc>, id
     encode_cursor(created_at, id)
 }
 
-pub fn parse_security_logs_cursor(cursor: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), DbError> {
+pub fn parse_security_logs_cursor(
+    cursor: &str,
+) -> Result<(chrono::DateTime<chrono::Utc>, String), DbError> {
     decode_cursor(cursor)
 }
 

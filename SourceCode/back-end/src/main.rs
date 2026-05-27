@@ -5,11 +5,11 @@ use back_end::exports_db;
 use back_end::logs_db;
 use back_end::{AppState, api_docs::ApiDoc, db, handlers, rate_limit};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use tower_http::compression::CompressionLayer;
+use tower_http::trace::TraceLayer;
 use url::Url;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use tower_http::trace::TraceLayer;
-use tower_http::compression::CompressionLayer;
 
 const VARS: [&str; 12] = [
     "JWT_SECRET",
@@ -362,9 +362,10 @@ async fn main() {
         .into();
 
     // Parse allowed origins from environment variable or use defaults
-    let allowed_origins_str = std::env::var("ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "http://localhost:5173,http://logsmart.app,https://logsmart.app".to_string());
-    
+    let allowed_origins_str = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| {
+        "http://localhost:5173,http://logsmart.app,https://logsmart.app".to_string()
+    });
+
     let allowed_origins: Vec<_> = allowed_origins_str
         .split(',')
         .filter_map(|origin| {
@@ -381,7 +382,8 @@ async fn main() {
         tracing::warn!("No valid CORS origins configured, using defaults");
     }
 
-    let app = swagger_router.merge(api_routes)
+    let app = swagger_router
+        .merge(api_routes)
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
         .layer(

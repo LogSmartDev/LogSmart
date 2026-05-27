@@ -143,7 +143,8 @@ pub async fn register_company_admin(
     let user_agent = extract_user_agent(&headers);
 
     // Validate request payload
-    payload.validate()
+    payload
+        .validate()
         .map_err(|e| err_bad_request(&format!("Validation failed: {e}")))?;
 
     if let Err(e) = validate_password_policy(&payload.password) {
@@ -244,7 +245,8 @@ pub async fn login(
     let user_agent = extract_user_agent(&headers);
 
     // Validate request payload
-    payload.validate()
+    payload
+        .validate()
         .map_err(|e| err_bad_request(&format!("Validation failed: {e}")))?;
 
     let (token, user): (String, db::UserRecord) = services::AuthService::verify_credentials(
@@ -350,9 +352,8 @@ pub async fn update_profile(
         payload.last_name,
     )
     .await
-    .map_err(|e| {
+    .inspect_err(|e| {
         tracing::error!("Failed to update profile: {:?}", e);
-        e
     })?;
 
     // Invalidate cache
@@ -449,9 +450,8 @@ pub async fn reset_password(
         &payload.new_password,
     )
     .await
-    .map_err(|e| {
+    .inspect_err(|e| {
         tracing::error!("Password reset failed: {:?}", e);
-        e
     })?;
 
     // Invalidate cache

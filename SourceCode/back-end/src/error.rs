@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
@@ -93,8 +93,12 @@ impl From<sqlx::Error> for DbError {
     fn from(err: sqlx::Error) -> Self {
         match err {
             sqlx::Error::RowNotFound => DbError::NotFound(err.to_string()),
-            sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => DbError::UniqueViolation(err.to_string()),
-            sqlx::Error::Database(ref db_err) if db_err.is_foreign_key_violation() => DbError::ForeignKeyViolation(err.to_string()),
+            sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                DbError::UniqueViolation(err.to_string())
+            }
+            sqlx::Error::Database(ref db_err) if db_err.is_foreign_key_violation() => {
+                DbError::ForeignKeyViolation(err.to_string())
+            }
             _ => DbError::Internal(err.to_string()),
         }
     }

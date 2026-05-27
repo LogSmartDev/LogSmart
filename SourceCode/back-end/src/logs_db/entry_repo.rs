@@ -1,10 +1,10 @@
 use anyhow::Result;
-use mongodb::options::ReturnDocument;
 use futures_util::TryStreamExt;
+use mongodb::options::ReturnDocument;
 
+use super::scheduling::compute_period_bounds;
 use super::types::{Frequency, LogEntry, LogStatus};
 use super::{LogDb, collect_cursor};
-use super::scheduling::compute_period_bounds;
 
 /// Retrieves all log entries for a branch.
 ///
@@ -109,7 +109,8 @@ pub async fn get_latest_submitted_entries_batch(
         "status": mongodb::bson::to_bson(&LogStatus::Submitted)?,
     };
 
-    let cursor = db.log_entries()
+    let cursor = db
+        .log_entries()
         .find(filter)
         .sort(mongodb::bson::doc! { "submitted_at": -1 })
         .await?;
@@ -204,8 +205,7 @@ pub async fn has_submitted_entries_batch(
     for (name, freq) in templates {
         let (start, end) = compute_period_bounds(freq);
         let has_submitted = entries.iter().any(|e| {
-            e.template_name == *name
-                && e.submitted_at.is_some_and(|ts| ts >= start && ts <= end)
+            e.template_name == *name && e.submitted_at.is_some_and(|ts| ts >= start && ts <= end)
         });
         results.insert(name.to_string(), has_submitted);
     }
@@ -234,7 +234,10 @@ pub async fn get_draft_entries_batch(
     let (period_start, period_end) = {
         let daily = compute_period_bounds(&Frequency::Daily);
         let yearly = compute_period_bounds(&Frequency::Yearly);
-        (std::cmp::min(daily.0, yearly.0), std::cmp::max(daily.1, yearly.1))
+        (
+            std::cmp::min(daily.0, yearly.0),
+            std::cmp::max(daily.1, yearly.1),
+        )
     };
 
     let filter = mongodb::bson::doc! {
@@ -422,7 +425,8 @@ pub async fn update_log_entry_with_return(
         }
     };
 
-    let result = db.log_entries()
+    let result = db
+        .log_entries()
         .find_one_and_update(filter, update)
         .return_document(ReturnDocument::After)
         .await?;

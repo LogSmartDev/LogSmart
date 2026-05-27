@@ -1,18 +1,22 @@
-use std::fmt::Write;
 use crate::error::DbError;
+use std::fmt::Write;
 
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::types::*;
-use super::{CLOCK_EVENT_SELECT_COLUMNS, CLOCK_EVENT_RETURNING};
-use super::{encode_cursor, decode_cursor};
+use super::{CLOCK_EVENT_RETURNING, CLOCK_EVENT_SELECT_COLUMNS};
+use super::{decode_cursor, encode_cursor};
 
 /// Creates a new clock-in event for a user.
 ///
 /// # Errors
 /// Returns an error if the database insert fails.
-pub async fn clock_in(pool: &PgPool, user_id: &str, company_id: &str) -> Result<ClockEvent, DbError> {
+pub async fn clock_in(
+    pool: &PgPool,
+    user_id: &str,
+    company_id: &str,
+) -> Result<ClockEvent, DbError> {
     let id = Uuid::new_v4().to_string();
     let event = sqlx::query_as::<_, ClockEvent>(
         &format!("INSERT INTO clock_events (id, user_id, company_id, clock_in)\n        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)\n        {CLOCK_EVENT_RETURNING}\n        "),
@@ -199,6 +203,8 @@ pub fn create_clock_events_cursor(created_at: chrono::DateTime<chrono::Utc>, id:
     encode_cursor(created_at, id)
 }
 
-pub fn parse_clock_events_cursor(cursor: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), DbError> {
+pub fn parse_clock_events_cursor(
+    cursor: &str,
+) -> Result<(chrono::DateTime<chrono::Utc>, String), DbError> {
     decode_cursor(cursor)
 }

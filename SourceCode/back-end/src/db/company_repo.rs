@@ -1,15 +1,19 @@
-use sqlx::PgPool;
 use crate::error::DbError;
+use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::types::*;
 use super::COMPANY_RETURNING_COLUMNS;
+use super::types::*;
 
 /// Creates a new company in the database.
 ///
 /// # Errors
 /// Returns an error if database insert fails.
-pub async fn create_company<'a, E>(executor: E, name: String, address: String) -> Result<Company, DbError>
+pub async fn create_company<'a, E>(
+    executor: E,
+    name: String,
+    address: String,
+) -> Result<Company, DbError>
 where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
 {
@@ -101,7 +105,10 @@ pub async fn update_company(
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn mark_company_data_exported(pool: &PgPool, company_id: &str) -> Result<Company, DbError> {
+pub async fn mark_company_data_exported(
+    pool: &PgPool,
+    company_id: &str,
+) -> Result<Company, DbError> {
     sqlx::query_as(
         &format!("UPDATE companies\n        SET data_exported_at = NOW()\n        WHERE id = $1\n        {COMPANY_RETURNING_COLUMNS}\n        "),
     )

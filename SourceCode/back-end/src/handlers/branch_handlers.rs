@@ -35,10 +35,16 @@ pub async fn create_branch(
     Json(payload): Json<CreateBranchRequest>,
 ) -> Result<(StatusCode, Json<BranchDto>), crate::error::AppError> {
     // Validate request payload
-    payload.validate()
+    payload
+        .validate()
         .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
 
-    let company_id = user.company_id.clone().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     let branch = db::create_branch(
         &state.postgres,
@@ -48,9 +54,9 @@ pub async fn create_branch(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to create branch".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to create branch".to_string())
+    })?;
 
     AuditLogger::log(
         &state.postgres,
@@ -87,14 +93,19 @@ pub async fn list_branches(
     ReadCompanyUser(_claims, user): ReadCompanyUser,
     State(state): State<AppState>,
 ) -> Result<Json<ListBranchesResponse>, crate::error::AppError> {
-    let company_id = user.company_id.clone().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
     let branches =
         db::get_branches_by_company_id_with_deletion_status(&state.postgres, &company_id)
             .await
             .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Database error".to_string())
-        })?;
+                tracing::error!("Error: {:?}", e);
+                crate::error::AppError::Internal("Database error".to_string())
+            })?;
 
     Ok(Json(ListBranchesResponse {
         branches: branches.into_iter().map(BranchDto::from).collect(),
@@ -123,10 +134,16 @@ pub async fn update_branch(
     Json(payload): Json<UpdateBranchRequest>,
 ) -> Result<Json<BranchDto>, crate::error::AppError> {
     // Validate request payload
-    payload.validate()
+    payload
+        .validate()
         .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
 
-    let company_id = user.company_id.clone().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     // Verify the branch belongs to the user's company
     let branch = db::get_branch_by_id(&state.postgres, &payload.branch_id)
@@ -135,10 +152,14 @@ pub async fn update_branch(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Branch not found".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Branch not found".to_string(),
+        ))?;
 
     if branch.company_id != company_id {
-        return Err(crate::error::AppError::Forbidden("Branch does not belong to your company".to_string()));
+        return Err(crate::error::AppError::Forbidden(
+            "Branch does not belong to your company".to_string(),
+        ));
     }
 
     let updated_branch = db::update_branch(
@@ -149,9 +170,9 @@ pub async fn update_branch(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to update branch".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to update branch".to_string())
+    })?;
 
     AuditLogger::log(
         &state.postgres,
@@ -193,7 +214,12 @@ pub async fn request_branch_deletion(
     State(state): State<AppState>,
     Json(payload): Json<RequestBranchDeletionRequest>,
 ) -> Result<Json<RequestBranchDeletionResponse>, crate::error::AppError> {
-    let company_id = user.company_id.as_ref().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user
+        .company_id
+        .as_ref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     let branch = db::get_branch_by_id(&state.postgres, &payload.branch_id)
         .await
@@ -201,10 +227,14 @@ pub async fn request_branch_deletion(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Branch not found".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Branch not found".to_string(),
+        ))?;
 
     if &branch.company_id != company_id {
-        return Err(crate::error::AppError::Forbidden("Branch does not belong to your company".to_string()));
+        return Err(crate::error::AppError::Forbidden(
+            "Branch does not belong to your company".to_string(),
+        ));
     }
 
     let token = generate_uuid6_token();
@@ -219,9 +249,9 @@ pub async fn request_branch_deletion(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to process deletion request".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to process deletion request".to_string())
+    })?;
 
     let confirmation_link = format!(
         "{}/confirm-branch-deletion?token={}",
@@ -282,7 +312,9 @@ pub async fn confirm_branch_deletion(
             crate::error::AppError::Internal("Database error".to_string())
         })?;
 
-    let (token_id, user_id, branch_id) = token_record.ok_or(crate::error::AppError::Unauthorized("Invalid or expired confirmation token".to_string()))?;
+    let (token_id, user_id, branch_id) = token_record.ok_or(
+        crate::error::AppError::Unauthorized("Invalid or expired confirmation token".to_string()),
+    )?;
 
     let branch = db::get_branch_by_id(&state.postgres, &branch_id)
         .await

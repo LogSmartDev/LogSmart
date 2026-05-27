@@ -126,7 +126,7 @@ mod user_service_tests {
 
         // Company managers should not be able to assign LogSmart admin role
         assert!(!company_manager.is_logsmart_admin());
-        
+
         // Verify permission check
         let can_assign_admin = company_manager.is_logsmart_admin();
         assert!(!can_assign_admin);
@@ -137,10 +137,10 @@ mod user_service_tests {
     fn test_readonly_hq_cannot_update_members() {
         let mut readonly_hq = create_test_staff_user();
         readonly_hq.branch_id = None; // Staff with no branch = readonly HQ
-        
+
         // Verify readonly HQ users are correctly identified
         assert!(readonly_hq.is_readonly_hq());
-        
+
         // Verify readonly HQ users cannot manage branches
         assert!(!readonly_hq.can_manage_branch());
     }
@@ -161,7 +161,9 @@ impl UserService {
             db::get_user_by_email(db_pool, email),
             "fetching user by email"
         )?
-        .ok_or(crate::error::AppError::NotFound("User not found".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "User not found".to_string(),
+        ))?;
         Ok(user)
     }
 
@@ -173,8 +175,9 @@ impl UserService {
         db_pool: &PgPool,
         user_id: &str,
     ) -> Result<db::UserRecord, crate::error::AppError> {
-        let user = try_db!(db::get_user_by_id(db_pool, user_id), "fetching user by id")?
-            .ok_or(crate::error::AppError::NotFound("User not found".to_string()))?;
+        let user = try_db!(db::get_user_by_id(db_pool, user_id), "fetching user by id")?.ok_or(
+            crate::error::AppError::NotFound("User not found".to_string()),
+        )?;
         Ok(user)
     }
 
@@ -220,7 +223,9 @@ impl UserService {
             db::get_user_company_id(db_pool, user_id),
             "fetching user company ID"
         )?
-        .ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
         Ok(company_id)
     }
 
@@ -239,34 +244,48 @@ impl UserService {
         profile_picture_id: Option<String>,
     ) -> Result<db::UserRecord, crate::error::AppError> {
         if !admin_user.can_manage_branch() || admin_user.is_readonly_hq() {
-            return Err(crate::error::AppError::Forbidden("Only managers can update member profiles".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Only managers can update member profiles".to_string(),
+            ));
         }
 
         let target_user = Self::get_user_by_email(db_pool, target_email).await?;
 
         if admin_user.is_company_manager() && admin_user.company_id != target_user.company_id {
-            return Err(crate::error::AppError::Forbidden("Cannot update users from other companies".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Cannot update users from other companies".to_string(),
+            ));
         }
 
         if admin_user.is_branch_manager() {
             if admin_user.branch_id != target_user.branch_id {
-                return Err(crate::error::AppError::Forbidden("Branch managers can only manage users in their branch".to_string()));
+                return Err(crate::error::AppError::Forbidden(
+                    "Branch managers can only manage users in their branch".to_string(),
+                ));
             }
             if branch_id != admin_user.branch_id {
-                return Err(crate::error::AppError::Forbidden("Branch managers can only assign users to their own branch".to_string()));
+                return Err(crate::error::AppError::Forbidden(
+                    "Branch managers can only assign users to their own branch".to_string(),
+                ));
             }
             if role != db::UserRole::Staff {
-                return Err(crate::error::AppError::Forbidden("Branch managers can only manage staff members".to_string()));
+                return Err(crate::error::AppError::Forbidden(
+                    "Branch managers can only manage staff members".to_string(),
+                ));
             }
         }
 
         if target_user.is_logsmart_admin() && !admin_user.is_logsmart_admin() {
-            return Err(crate::error::AppError::Forbidden("Cannot modify LogSmart internal admin users".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Cannot modify LogSmart internal admin users".to_string(),
+            ));
         }
 
         // Only LogSmart admins can assign the LogSmart admin role
         if role == db::UserRole::LogSmartAdmin && !admin_user.is_logsmart_admin() {
-            return Err(crate::error::AppError::Forbidden("Only LogSmart admins can assign the LogSmart admin role".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Only LogSmart admins can assign the LogSmart admin role".to_string(),
+            ));
         }
 
         try_db!(
@@ -295,19 +314,27 @@ impl UserService {
         let target_user = Self::get_user_by_email(db_pool, target_email).await?;
 
         if admin_user.is_company_manager() && admin_user.company_id != target_user.company_id {
-            return Err(crate::error::AppError::Forbidden("Cannot delete users from other companies".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Cannot delete users from other companies".to_string(),
+            ));
         }
 
         if admin_user.is_branch_manager() && admin_user.branch_id != target_user.branch_id {
-            return Err(crate::error::AppError::Forbidden("Branch managers can only delete users in their branch".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Branch managers can only delete users in their branch".to_string(),
+            ));
         }
 
         if target_user.is_logsmart_admin() && !admin_user.is_logsmart_admin() {
-            return Err(crate::error::AppError::Forbidden("Cannot delete LogSmart internal admin users".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Cannot delete LogSmart internal admin users".to_string(),
+            ));
         }
 
         if target_user.email == admin_user.email {
-            return Err(crate::error::AppError::BadRequest("Cannot delete your own account".to_string()));
+            return Err(crate::error::AppError::BadRequest(
+                "Cannot delete your own account".to_string(),
+            ));
         }
 
         try_db!(

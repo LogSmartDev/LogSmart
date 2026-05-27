@@ -1,11 +1,15 @@
 use anyhow::Result;
 use chrono::{Datelike, Timelike};
 
-use super::types::{AvailabilityStatus, Frequency, LogStatus, PeriodValidationError, Schedule, TemplateLayout};
+use super::types::{
+    AvailabilityStatus, Frequency, LogStatus, PeriodValidationError, Schedule, TemplateLayout,
+};
 
 /// Computes the start and end timestamps for the current period based on frequency.
 /// Extracted from the three functions that duplicated this ~80-line match block.
-pub(super) fn compute_period_bounds(frequency: &Frequency) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+pub(super) fn compute_period_bounds(
+    frequency: &Frequency,
+) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
     let now = chrono::Utc::now();
     match frequency {
         Frequency::Daily => {

@@ -40,11 +40,11 @@ pub async fn clock_in(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
-    let event = services::ClockService::clock_in(&state.postgres, &user.id, &company_id)
-        .await
-        ?;
+    let event = services::ClockService::clock_in(&state.postgres, &user.id, &company_id).await?;
 
     Ok(Json(ClockEventResponse::from(event)))
 }
@@ -69,9 +69,7 @@ pub async fn clock_out(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<ClockEventResponse>, crate::error::AppError> {
-    let event = services::ClockService::clock_out(&state.postgres, &user.id)
-        .await
-        ?;
+    let event = services::ClockService::clock_out(&state.postgres, &user.id).await?;
 
     Ok(Json(ClockEventResponse::from(event)))
 }
@@ -95,9 +93,7 @@ pub async fn get_clock_status(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<ClockStatusResponse>, crate::error::AppError> {
-    let (current, recent) = services::ClockService::get_status(&state.postgres, &user.id)
-        .await
-        ?;
+    let (current, recent) = services::ClockService::get_status(&state.postgres, &user.id).await?;
 
     let is_clocked_in = current
         .as_ref()
@@ -180,8 +176,7 @@ pub async fn get_company_clock_events(
         params.limit,
         params.cursor,
     )
-    .await
-    ?;
+    .await?;
 
     let events = events
         .into_iter()

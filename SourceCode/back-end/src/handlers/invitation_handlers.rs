@@ -59,21 +59,28 @@ pub async fn invite_user(
     let user_agent = extract_user_agent(&headers);
 
     // Validate request payload
-    payload.validate()
+    payload
+        .validate()
         .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
 
     // Branch managers can only invite staff to their own branch
     if user.is_branch_manager() {
         if payload.branch_id.is_none() {
-            return Err(crate::error::AppError::Forbidden("Branch managers cannot invite company-wide users".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Branch managers cannot invite company-wide users".to_string(),
+            ));
         }
         if payload.branch_id != user.branch_id {
-            return Err(crate::error::AppError::Forbidden("Branch managers can only invite users to their own branch".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Branch managers can only invite users to their own branch".to_string(),
+            ));
         }
         if let Some(role) = &payload.role
             && *role != db::UserRole::Staff
         {
-            return Err(crate::error::AppError::Forbidden("Branch managers can only invite staff members".to_string()));
+            return Err(crate::error::AppError::Forbidden(
+                "Branch managers can only invite staff members".to_string(),
+            ));
         }
     }
 
@@ -137,11 +144,15 @@ pub async fn accept_invitation(
         || payload.last_name.is_empty()
         || payload.password.is_empty()
     {
-        return Err(crate::error::AppError::BadRequest("Missing required fields".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "Missing required fields".to_string(),
+        ));
     }
 
     if let Err(e) = validate_password_policy(&payload.password) {
-        return Err(crate::error::AppError::BadRequest(e.to_string() .to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            e.to_string().to_string(),
+        ));
     }
 
     let invitation = db::get_invitation_by_token(&state.postgres, &payload.token)
@@ -150,12 +161,16 @@ pub async fn accept_invitation(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::Unauthorized("Invalid or expired invitation".to_string()))?;
+        .ok_or(crate::error::AppError::Unauthorized(
+            "Invalid or expired invitation".to_string(),
+        ))?;
 
     let now = chrono::Utc::now();
 
     if now > invitation.expires_at {
-        return Err(crate::error::AppError::Unauthorized("Invitation has expired".to_string()));
+        return Err(crate::error::AppError::Unauthorized(
+            "Invitation has expired".to_string(),
+        ));
     }
 
     if db::get_user_by_email(&state.postgres, &invitation.email)
@@ -165,11 +180,13 @@ pub async fn accept_invitation(
                 "Database error checking existing user during invitation acceptance: {:?}",
                 e
             );
-            crate::error::AppError::Internal("Database error" .to_string())
+            crate::error::AppError::Internal("Database error".to_string())
         })?
         .is_some()
     {
-        return Err(crate::error::AppError::Conflict("Email already has an account".to_string()));
+        return Err(crate::error::AppError::Conflict(
+            "Email already has an account".to_string(),
+        ));
     }
 
     let password_hash = hash_password(&payload.password).map_err(|e| {
@@ -177,7 +194,7 @@ pub async fn accept_invitation(
             "Failed to hash password during invitation acceptance: {:?}",
             e
         );
-        crate::error::AppError::Internal("Failed to process password" .to_string())
+        crate::error::AppError::Internal("Failed to process password".to_string())
     })?;
 
     let created_user = db::accept_invitation_with_user_creation(
@@ -193,9 +210,9 @@ pub async fn accept_invitation(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to create user".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to create user".to_string())
+    })?;
 
     let user_id = created_user.id.clone();
     let accept_audit_ctx = crate::utils::AuditContext {
@@ -214,7 +231,7 @@ pub async fn accept_invitation(
                 "Failed to generate JWT token for invitation acceptance: {:?}",
                 e
             );
-            crate::error::AppError::Internal("Failed to generate token" .to_string())
+            crate::error::AppError::Internal("Failed to generate token".to_string())
         })?;
 
     AuditLogger::log_invitation_accepted(
@@ -264,7 +281,7 @@ pub async fn accept_invitation(
                 "Failed to set cookie in invitation acceptance response: {:?}",
                 e
             );
-            crate::error::AppError::Internal("Failed to set authentication cookie" .to_string())
+            crate::error::AppError::Internal("Failed to set authentication cookie".to_string())
         })?,
     );
 
@@ -298,7 +315,9 @@ pub async fn get_invitation_details(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Invitation not found".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Invitation not found".to_string(),
+        ))?;
 
     let company_name = db::get_company_by_id(&state.postgres, &invitation.company_id)
         .await
@@ -306,7 +325,9 @@ pub async fn get_invitation_details(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Company not found".to_string()))?
+        .ok_or(crate::error::AppError::NotFound(
+            "Company not found".to_string(),
+        ))?
         .name;
 
     Ok(Json(GetInvitationDetailsResponse {
@@ -336,7 +357,12 @@ pub async fn get_pending_invitations(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
 ) -> Result<Json<GetPendingInvitationsResponse>, crate::error::AppError> {
-    let company_id = user.company_id.as_ref().ok_or(crate::error::AppError::Forbidden("User is not associated with a company".to_string()))?;
+    let company_id = user
+        .company_id
+        .as_ref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     let invitations =
         services::InvitationService::get_pending_invitations(&state.postgres, company_id)
@@ -357,8 +383,7 @@ pub async fn get_pending_invitations(
                         expires_at: inv.expires_at,
                     })
                     .collect::<Vec<_>>()
-            })
-            ?;
+            })?;
 
     Ok(Json(GetPendingInvitationsResponse { invitations }))
 }
@@ -393,8 +418,7 @@ pub async fn cancel_invitation(
         &payload.invitation_id,
         crate::audit_ctx!(&audit_ctx),
     )
-    .await
-    ?;
+    .await?;
 
     Ok(Json(
         json!({ "message": "Invitation cancelled successfully" }),

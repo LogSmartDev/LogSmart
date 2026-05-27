@@ -1,6 +1,6 @@
-use utoipa::ToSchema;
-use schemars::JsonSchema;
 use mongodb::bson::Uuid;
+use schemars::JsonSchema;
+use utoipa::ToSchema;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, ToSchema, JsonSchema)]
 pub struct Position {

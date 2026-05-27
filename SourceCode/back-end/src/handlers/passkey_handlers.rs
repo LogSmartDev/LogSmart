@@ -49,7 +49,7 @@ pub async fn start_passkey_registration(
             user.id,
             e
         );
-        crate::error::AppError::Internal("Invalid user ID format" .to_string())
+        crate::error::AppError::Internal("Invalid user ID format".to_string())
     })?;
 
     let existing_passkeys = db::get_passkeys_by_user(&state.postgres, &user.id)
@@ -81,9 +81,9 @@ pub async fn start_passkey_registration(
         })?;
 
     let mut options = serde_json::to_value(&ccr.public_key).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Internal server error".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Internal server error".to_string())
+    })?;
 
     if let Some(obj) = options.as_object_mut() {
         if let Some(auth_sel) = obj.get_mut("authenticatorSelection") {
@@ -106,9 +106,9 @@ pub async fn start_passkey_registration(
 
     let auth_id = Uuid::new_v4().to_string();
     let challenge_json = serde_json::to_string(&reg_state).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to serialize challenge".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to serialize challenge".to_string())
+    })?;
 
     db::create_passkey_session(
         &state.postgres,
@@ -120,9 +120,9 @@ pub async fn start_passkey_registration(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to store registration session".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to store registration session".to_string())
+    })?;
 
     AuditLogger::log(
         &state.postgres,
@@ -170,20 +170,24 @@ pub async fn finish_passkey_registration(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Registration session expired or invalid".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Registration session expired or invalid".to_string(),
+        ))?;
 
     // Ensure it's the right type
     if session.session_type != "reg" {
-        return Err(crate::error::AppError::BadRequest("Invalid session type".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "Invalid session type".to_string(),
+        ));
     }
 
     // Delete session immediately to prevent replay
     let _ = db::delete_passkey_session(&state.postgres, auth_id_key).await;
 
     let reg_state: PasskeyRegistration = serde_json::from_str(&session.challenge).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to restore registration state".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to restore registration state".to_string())
+    })?;
 
     let stored_name = session.meta.unwrap_or_default();
 
@@ -214,9 +218,9 @@ pub async fn finish_passkey_registration(
     );
 
     let public_key_json = serde_json::to_string(&passkey).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to save passkey".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to save passkey".to_string())
+    })?;
 
     db::create_passkey(
         &state.postgres,
@@ -227,9 +231,9 @@ pub async fn finish_passkey_registration(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Database error".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Database error".to_string())
+    })?;
 
     let _ = db::log_security_event(
         &state.postgres,
@@ -275,7 +279,9 @@ pub async fn start_passkey_login(
     State(state): State<AppState>,
     Json(payload): Json<PasskeyAuthenticationStartRequest>,
 ) -> Result<Json<PasskeyAuthenticationStartResponse>, crate::error::AppError> {
-    let email = payload.email.ok_or(crate::error::AppError::BadRequest("Email is required".to_string()))?;
+    let email = payload.email.ok_or(crate::error::AppError::BadRequest(
+        "Email is required".to_string(),
+    ))?;
 
     let user = db::get_user_by_email(&state.postgres, &email)
         .await
@@ -296,7 +302,9 @@ pub async fn start_passkey_login(
             false,
         )
         .await;
-        return Err(crate::error::AppError::NotFound("User not found".to_string()));
+        return Err(crate::error::AppError::NotFound(
+            "User not found".to_string(),
+        ));
     }
 
     let passkeys = db::get_passkeys_by_user(&state.postgres, &user.id)
@@ -317,7 +325,9 @@ pub async fn start_passkey_login(
             false,
         )
         .await;
-        return Err(crate::error::AppError::NotFound("No passkeys found for this user".to_string()));
+        return Err(crate::error::AppError::NotFound(
+            "No passkeys found for this user".to_string(),
+        ));
     }
 
     let user_passkeys: Vec<Passkey> = passkeys
@@ -335,9 +345,9 @@ pub async fn start_passkey_login(
 
     let auth_id = Uuid::new_v4().to_string();
     let challenge_json = serde_json::to_string(&auth_state).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to serialize challenge".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to serialize challenge".to_string())
+    })?;
 
     db::create_passkey_session(
         &state.postgres,
@@ -349,9 +359,9 @@ pub async fn start_passkey_login(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to store authentication session".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to store authentication session".to_string())
+    })?;
 
     AuditLogger::log(
         &state.postgres,
@@ -395,15 +405,17 @@ pub async fn start_discoverable_passkey_login(
         .start_discoverable_authentication()
         .map_err(|e| {
             tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to start discoverable authentication".to_string())
+            crate::error::AppError::Internal(
+                "Failed to start discoverable authentication".to_string(),
+            )
         })?;
 
     let auth_id = Uuid::new_v4().to_string();
     // Store with empty user_id or None - will be extracted from credential during finish
     let challenge_json = serde_json::to_string(&auth_state).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to serialize challenge".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to serialize challenge".to_string())
+    })?;
 
     db::create_passkey_session(
         &state.postgres,
@@ -415,9 +427,11 @@ pub async fn start_discoverable_passkey_login(
     )
     .await
     .map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to store discoverable authentication session".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal(
+            "Failed to store discoverable authentication session".to_string(),
+        )
+    })?;
 
     AuditLogger::log(
         &state.postgres,
@@ -468,15 +482,21 @@ pub async fn finish_passkey_login(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Authentication session expired or invalid".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Authentication session expired or invalid".to_string(),
+        ))?;
 
     if session.session_type != "auth" {
-        return Err(crate::error::AppError::BadRequest("Invalid session type".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "Invalid session type".to_string(),
+        ));
     }
 
     let _ = db::delete_passkey_session(&state.postgres, &payload.auth_id).await;
 
-    let user_id = session.user_id.ok_or(crate::error::AppError::Internal("User ID missing from session".to_string()))?;
+    let user_id = session.user_id.ok_or(crate::error::AppError::Internal(
+        "User ID missing from session".to_string(),
+    ))?;
 
     let auth_state: PasskeyAuthentication =
         serde_json::from_str(&session.challenge).map_err(|e| {
@@ -485,9 +505,9 @@ pub async fn finish_passkey_login(
         })?;
 
     let req: PublicKeyCredential = serde_json::from_value(payload.credential).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::BadRequest("Invalid credential format".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::BadRequest("Invalid credential format".to_string())
+    })?;
 
     let auth_result = state
         .webauthn
@@ -509,10 +529,14 @@ pub async fn finish_passkey_login(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::Internal("User associated with passkey not found".to_string()))?;
+        .ok_or(crate::error::AppError::Internal(
+            "User associated with passkey not found".to_string(),
+        ))?;
 
     if user.company_deleted_at.is_some() {
-        return Err(crate::error::AppError::Unauthorized("Your company has been deleted. Please contact support.".to_string()));
+        return Err(crate::error::AppError::Unauthorized(
+            "Your company has been deleted. Please contact support.".to_string(),
+        ));
     }
 
     if let Some(pk) = passkey_record {
@@ -609,10 +633,14 @@ pub async fn finish_discoverable_passkey_login(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Authentication session expired or invalid".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Authentication session expired or invalid".to_string(),
+        ))?;
 
     if session.session_type != "disc_auth" {
-        return Err(crate::error::AppError::BadRequest("Invalid session type".to_string()));
+        return Err(crate::error::AppError::BadRequest(
+            "Invalid session type".to_string(),
+        ));
     }
 
     let _ = db::delete_passkey_session(&state.postgres, &payload.auth_id).await;
@@ -624,9 +652,9 @@ pub async fn finish_discoverable_passkey_login(
         })?;
 
     let req: PublicKeyCredential = serde_json::from_value(payload.credential).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::BadRequest("Invalid credential format".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::BadRequest("Invalid credential format".to_string())
+    })?;
 
     // First identify the user from the credential
     let (user_unique_id, cred_id) = state
@@ -652,13 +680,15 @@ pub async fn finish_discoverable_passkey_login(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::NotFound("Passkey not found".to_string()))?;
+        .ok_or(crate::error::AppError::NotFound(
+            "Passkey not found".to_string(),
+        ))?;
 
     // Deserialize the stored passkey
     let passkey: Passkey = serde_json::from_str(&passkey_record.public_key).map_err(|e| {
-            tracing::error!("Error: {:?}", e);
-            crate::error::AppError::Internal("Failed to load passkey".to_string())
-        })?;
+        tracing::error!("Error: {:?}", e);
+        crate::error::AppError::Internal("Failed to load passkey".to_string())
+    })?;
 
     // Complete authentication
     let auth_result = state
@@ -684,10 +714,14 @@ pub async fn finish_discoverable_passkey_login(
             tracing::error!("Error: {:?}", e);
             crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or(crate::error::AppError::Internal("User associated with passkey not found".to_string()))?;
+        .ok_or(crate::error::AppError::Internal(
+            "User associated with passkey not found".to_string(),
+        ))?;
 
     if user.company_deleted_at.is_some() {
-        return Err(crate::error::AppError::Unauthorized("Your company has been deleted. Please contact support.".to_string()));
+        return Err(crate::error::AppError::Unauthorized(
+            "Your company has been deleted. Please contact support.".to_string(),
+        ));
     }
 
     let ip_address = extract_ip_from_headers_and_addr(&headers, &addr);
@@ -809,10 +843,10 @@ pub async fn delete_passkey(
         .map_err(|e| {
             let error_msg = e.to_string();
             if error_msg.contains("Passkey not found") {
-                crate::error::AppError::NotFound("Passkey not found" .to_string())
+                crate::error::AppError::NotFound("Passkey not found".to_string())
             } else {
                 tracing::error!("Database error deleting passkey: {:?}", e);
-                crate::error::AppError::Internal("Database error" .to_string())
+                crate::error::AppError::Internal("Database error".to_string())
             }
         })?;
 

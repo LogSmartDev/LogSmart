@@ -1,5 +1,5 @@
-use sqlx::PgPool;
 use crate::error::DbError;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::types::*;
@@ -55,7 +55,10 @@ pub async fn create_invitation(
 ///
 /// # Errors
 /// Returns an error if database query fails.
-pub async fn get_invitation_by_token(pool: &PgPool, token: &str) -> Result<Option<Invitation>, DbError> {
+pub async fn get_invitation_by_token(
+    pool: &PgPool,
+    token: &str,
+) -> Result<Option<Invitation>, DbError> {
     let invitation = sqlx::query_as::<_, Invitation>(
         r"
         SELECT id, company_id, email, token, role, branch_id, created_at, expires_at, accepted_at, cancelled_at
@@ -446,7 +449,10 @@ pub async fn create_passkey_session(
 ///
 /// # Errors
 /// Returns an error if the database query fails.
-pub async fn get_passkey_session(pool: &PgPool, id: &str) -> Result<Option<PasskeySession>, DbError> {
+pub async fn get_passkey_session(
+    pool: &PgPool,
+    id: &str,
+) -> Result<Option<PasskeySession>, DbError> {
     let session = sqlx::query_as::<_, PasskeySession>(
         r"
         SELECT id, session_type, user_id, challenge, meta, created_at, expires_at
