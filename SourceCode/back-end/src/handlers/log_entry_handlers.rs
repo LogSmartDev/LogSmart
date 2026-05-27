@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 use crate::{
     AppState,
@@ -174,8 +177,8 @@ pub async fn list_due_forms_today(
                         .as_ref()
                         .and_then(|e| e.submitted_at.map(|ts| ts.to_rfc3339())),
                     period: period.clone(),
-                    status: Some(LogStatus::Overdue.as_str().to_string()),
-                    availability_status: status.as_str().to_string(),
+                    status: Some(LogStatus::Overdue.to_string()),
+                    availability_status: status.to_string(),
                     available_from,
                     due_at,
                 });
@@ -268,7 +271,6 @@ pub async fn list_due_forms_today(
                     let derived_draft_status = draft_entry.as_ref().map(|e| {
                         logs_db::derive_log_status(e.status, &template.schedule, &period, now)
                             .0
-                            .as_str()
                             .to_string()
                     });
 
@@ -280,7 +282,7 @@ pub async fn list_due_forms_today(
                             .and_then(|e| e.submitted_at.map(|ts| ts.to_rfc3339())),
                         period,
                         status: derived_draft_status,
-                        availability_status: status.as_str().to_string(),
+                        availability_status: status.to_string(),
                         available_from,
                         due_at,
                     });
@@ -392,8 +394,8 @@ pub async fn get_log_entry(
         template_name: entry.template_name,
         template_layout: processed_layout,
         entry_data: entry.entry_data,
-        status: entry.status.as_str().to_string(),
-        availability_status: availability.as_str().to_string(),
+        status: entry.status.to_string(),
+        availability_status: availability.to_string(),
         created_at: entry.created_at.to_rfc3339(),
         updated_at: entry.updated_at.to_rfc3339(),
         submitted_at: entry.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -462,8 +464,8 @@ pub async fn update_log_entry(
         template_name: updated_entry.template_name,
         template_layout: processed_layout,
         entry_data: updated_entry.entry_data,
-        status: updated_entry.status.as_str().to_string(),
-        availability_status: availability.as_str().to_string(),
+        status: updated_entry.status.to_string(),
+        availability_status: availability.to_string(),
         created_at: updated_entry.created_at.to_rfc3339(),
         updated_at: updated_entry.updated_at.to_rfc3339(),
         submitted_at: updated_entry.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -660,8 +662,8 @@ pub async fn list_company_log_entries<S: ::std::hash::BuildHasher>(
             template_name: e.template_name,
             template_layout: processed_layout,
             entry_data: e.entry_data,
-            status: derived_status.as_str().to_string(),
-            availability_status: availability_status.as_str().to_string(),
+            status: derived_status.to_string(),
+            availability_status: availability_status.to_string(),
             created_at: e.created_at.to_rfc3339(),
             updated_at: e.updated_at.to_rfc3339(),
             submitted_at: e.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -746,8 +748,8 @@ pub async fn list_user_log_entries(
             template_name: e.template_name,
             template_layout: processed_layout,
             entry_data: e.entry_data,
-            status: derived_status.as_str().to_string(),
-            availability_status: availability_status.as_str().to_string(),
+            status: derived_status.to_string(),
+            availability_status: availability_status.to_string(),
             created_at: e.created_at.to_rfc3339(),
             updated_at: e.updated_at.to_rfc3339(),
             submitted_at: e.submitted_at.map(|ts| ts.to_rfc3339()),
@@ -755,7 +757,7 @@ pub async fn list_user_log_entries(
         });
 
         if let Some(status) = params.get("status")
-            && let Some(filter_status) = logs_db::LogStatus::from_str(status)
+            && let Ok(filter_status) = logs_db::LogStatus::from_str(status)
             && derived_status != filter_status
         {
             response_entries.pop();

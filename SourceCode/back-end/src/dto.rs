@@ -423,7 +423,10 @@ pub struct LoginRequest {
     #[validate(email)]
     #[schema(example = "admin@example.com")]
     pub email: String,
-    #[validate(length(min = 8, max = 128), custom(function = "validate_password_policy_attr"))]
+    #[validate(
+        length(min = 8, max = 128),
+        custom(function = "validate_password_policy_attr")
+    )]
     #[schema(example = "SecurePass123!")]
     pub password: String,
 }
@@ -450,7 +453,10 @@ pub struct AcceptInvitationRequest {
     #[validate(length(min = 1, max = 100))]
     #[schema(example = "Smith")]
     pub last_name: String,
-    #[validate(length(min = 8, max = 128), custom(function = "validate_password_policy_attr"))]
+    #[validate(
+        length(min = 8, max = 128),
+        custom(function = "validate_password_policy_attr")
+    )]
     #[schema(example = "MemberPass123!")]
     pub password: String,
 }
@@ -573,7 +579,10 @@ pub struct ResetPasswordRequest {
     #[validate(length(min = 1, max = 255))]
     #[schema(example = "reset-token-here")]
     pub token: String,
-    #[validate(length(min = 8, max = 128), custom(function = "validate_password_policy_attr"))]
+    #[validate(
+        length(min = 8, max = 128),
+        custom(function = "validate_password_policy_attr")
+    )]
     #[schema(example = "NewPassword123!")]
     pub new_password: String,
 }
@@ -945,12 +954,12 @@ pub fn validate_uuid_format(uuid: &str) -> Result<(), validator::ValidationError
     if uuid.len() != 36 {
         return Err(validator::ValidationError::new("invalid_uuid_length"));
     }
-    
+
     let bytes = uuid.as_bytes();
     if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
         return Err(validator::ValidationError::new("invalid_uuid_format"));
     }
-    
+
     // Check that all other characters are valid hex
     for (i, &b) in bytes.iter().enumerate() {
         if i == 8 || i == 13 || i == 18 || i == 23 {
@@ -960,6 +969,6 @@ pub fn validate_uuid_format(uuid: &str) -> Result<(), validator::ValidationError
             return Err(validator::ValidationError::new("invalid_uuid_characters"));
         }
     }
-    
+
     Ok(())
 }

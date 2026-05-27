@@ -58,7 +58,7 @@ pub async fn update_company_logo_id(
     query_builder.push("\n");
     query_builder.push(COMPANY_RETURNING_COLUMNS);
     query_builder.push("\n");
-    
+
     query_builder
         .build_query_as::<Company>()
         .fetch_one(pool)
@@ -104,7 +104,7 @@ pub async fn update_company(
     query_builder.push("\n");
     query_builder.push(COMPANY_RETURNING_COLUMNS);
     query_builder.push("\n");
-    
+
     query_builder
         .build_query_as::<Company>()
         .fetch_one(pool)
@@ -120,12 +120,13 @@ pub async fn mark_company_data_exported(
     pool: &PgPool,
     company_id: &str,
 ) -> Result<Company, DbError> {
-    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET data_exported_at = NOW()\nWHERE id = ");
+    let mut query_builder =
+        sqlx::QueryBuilder::new("UPDATE companies\nSET data_exported_at = NOW()\nWHERE id = ");
     query_builder.push_bind(company_id);
     query_builder.push("\n");
     query_builder.push(COMPANY_RETURNING_COLUMNS);
     query_builder.push("\n");
-    
+
     query_builder
         .build_query_as::<Company>()
         .fetch_one(pool)
@@ -143,7 +144,9 @@ pub async fn request_company_deletion(
     requester_email: &str,
 ) -> Result<Company, DbError> {
     let token = Uuid::new_v4().to_string();
-    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET deletion_requested_at = NOW(), deletion_token = ");
+    let mut query_builder = sqlx::QueryBuilder::new(
+        "UPDATE companies\nSET deletion_requested_at = NOW(), deletion_token = ",
+    );
     query_builder.push_bind(&token);
     query_builder.push(", deletion_requested_by_email = ");
     query_builder.push_bind(requester_email);
@@ -152,7 +155,7 @@ pub async fn request_company_deletion(
     query_builder.push("\n");
     query_builder.push(COMPANY_RETURNING_COLUMNS);
     query_builder.push("\n");
-    
+
     query_builder
         .build_query_as::<Company>()
         .fetch_one(pool)
@@ -169,14 +172,16 @@ pub async fn confirm_company_deletion(
     company_id: &str,
     token: &str,
 ) -> Result<Option<Company>, DbError> {
-    let mut query_builder = sqlx::QueryBuilder::new("UPDATE companies\nSET deleted_at = NOW(), deletion_token = NULL, deletion_requested_at = NULL\nWHERE id = ");
+    let mut query_builder = sqlx::QueryBuilder::new(
+        "UPDATE companies\nSET deleted_at = NOW(), deletion_token = NULL, deletion_requested_at = NULL\nWHERE id = ",
+    );
     query_builder.push_bind(company_id);
     query_builder.push(" AND deletion_token = ");
     query_builder.push_bind(token);
     query_builder.push(" AND deletion_requested_at IS NOT NULL AND deletion_requested_at > NOW() - INTERVAL '6 hours'\n");
     query_builder.push(COMPANY_RETURNING_COLUMNS);
     query_builder.push("\n");
-    
+
     let company = query_builder
         .build_query_as::<Company>()
         .fetch_optional(pool)

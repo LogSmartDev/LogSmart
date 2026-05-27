@@ -344,8 +344,6 @@ pub async fn rate_limit_middleware(
         app_state.rate_limit.check_register(ip)
     } else if path.contains("/auth/google/") || path.contains("/auth/oauth/") {
         app_state.rate_limit.check_oauth(ip)
-    } else if path.contains("/export") {
-        app_state.rate_limit.check_general(ip)
     } else {
         app_state.rate_limit.check_general(ip)
     };

@@ -104,7 +104,7 @@ pub async fn get_branch_by_id(pool: &PgPool, branch_id: &str) -> Result<Option<B
     let mut query_builder = sqlx::QueryBuilder::new(BRANCH_SELECT_COLUMNS);
     query_builder.push("\nWHERE id = ");
     query_builder.push_bind(branch_id);
-    
+
     let branch = query_builder
         .build_query_as::<Branch>()
         .fetch_optional(pool)

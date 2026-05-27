@@ -88,7 +88,7 @@ pub async fn get_security_logs_by_user(
     query_builder.push("\nORDER BY created_at DESC\nLIMIT ");
     query_builder.push_bind(limit);
     query_builder.push("\n");
-    
+
     let logs = query_builder
         .build_query_as::<SecurityLog>()
         .fetch_all(pool)
@@ -113,7 +113,7 @@ pub async fn get_recent_security_logs(
         query_builder.push("\nORDER BY created_at DESC\nLIMIT ");
         query_builder.push_bind(limit);
         query_builder.push("\n");
-        
+
         query_builder
             .build_query_as::<SecurityLog>()
             .fetch_all(pool)
@@ -123,7 +123,7 @@ pub async fn get_recent_security_logs(
         query_builder.push("\nORDER BY created_at DESC\nLIMIT ");
         query_builder.push_bind(limit);
         query_builder.push("\n");
-        
+
         query_builder
             .build_query_as::<SecurityLog>()
             .fetch_all(pool)

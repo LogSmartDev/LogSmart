@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use mongodb::bson::Uuid;
 use schemars::JsonSchema;
 use utoipa::ToSchema;
@@ -161,13 +163,12 @@ pub enum AvailabilityStatus {
     Overdue,
 }
 
-impl AvailabilityStatus {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
+impl Display for AvailabilityStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AvailabilityStatus::NotAvailable => "not_available",
-            AvailabilityStatus::Available => "available",
-            AvailabilityStatus::Overdue => "overdue",
+            AvailabilityStatus::NotAvailable => write!(f, "not_available"),
+            AvailabilityStatus::Available => write!(f, "available"),
+            AvailabilityStatus::Overdue => write!(f, "overdue"),
         }
     }
 }
@@ -193,27 +194,28 @@ pub enum LogStatus {
     Overdue,
 }
 
-impl LogStatus {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LogStatus::Draft => "draft",
-            LogStatus::Submitted => "submitted",
-            LogStatus::Reviewed => "reviewed",
-            LogStatus::Approved => "approved",
-            LogStatus::Overdue => "overdue",
+impl std::str::FromStr for LogStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "draft" => Ok(LogStatus::Draft),
+            "submitted" => Ok(LogStatus::Submitted),
+            "reviewed" => Ok(LogStatus::Reviewed),
+            "approved" => Ok(LogStatus::Approved),
+            "overdue" => Ok(LogStatus::Overdue),
+            _ => Err(()),
         }
     }
+}
 
-    #[must_use]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "draft" => Some(LogStatus::Draft),
-            "submitted" => Some(LogStatus::Submitted),
-            "reviewed" => Some(LogStatus::Reviewed),
-            "approved" => Some(LogStatus::Approved),
-            "overdue" => Some(LogStatus::Overdue),
-            _ => None,
+impl std::fmt::Display for LogStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogStatus::Draft => write!(f, "draft"),
+            LogStatus::Submitted => write!(f, "submitted"),
+            LogStatus::Reviewed => write!(f, "reviewed"),
+            LogStatus::Approved => write!(f, "approved"),
+            LogStatus::Overdue => write!(f, "overdue"),
         }
     }
 }

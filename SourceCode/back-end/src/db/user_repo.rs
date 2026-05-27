@@ -94,7 +94,7 @@ pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User
     query_builder.push("\nWHERE users.email = ");
     query_builder.push_bind(email);
     query_builder.push(" AND users.deleted_at IS NULL\n");
-    
+
     let user = query_builder
         .build_query_as::<UserRecord>()
         .fetch_optional(pool)
@@ -112,7 +112,7 @@ pub async fn get_user_by_id(pool: &PgPool, id: &str) -> Result<Option<UserRecord
     query_builder.push("\nWHERE users.id = ");
     query_builder.push_bind(id);
     query_builder.push(" AND users.deleted_at IS NULL\n");
-    
+
     let user = query_builder
         .build_query_as::<UserRecord>()
         .fetch_optional(pool)
@@ -147,7 +147,7 @@ pub async fn get_user_by_oauth(
     query_builder.push(" AND users.oauth_subject = ");
     query_builder.push_bind(subject);
     query_builder.push(" AND users.deleted_at IS NULL\n");
-    
+
     let user = query_builder
         .build_query_as::<UserRecord>()
         .fetch_optional(pool)
@@ -323,7 +323,7 @@ pub async fn get_users_by_company_id(
     query_builder.push("\nWHERE users.company_id = ");
     query_builder.push_bind(company_id);
     query_builder.push(" AND users.deleted_at IS NULL\n");
-    
+
     let users = query_builder
         .build_query_as::<UserRecord>()
         .fetch_all(pool)
@@ -344,7 +344,7 @@ pub async fn get_all_users_by_company_id(
     query_builder.push("\nWHERE users.company_id = ");
     query_builder.push_bind(company_id);
     query_builder.push("\n");
-    
+
     let users = query_builder
         .build_query_as::<UserRecord>()
         .fetch_all(pool)
