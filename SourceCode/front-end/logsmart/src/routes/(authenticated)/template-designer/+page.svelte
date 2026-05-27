@@ -10,12 +10,24 @@
 	import DesignCanvas from './DesignCanvas.svelte';
 	import ComponentsPalette from './ComponentsPalette.svelte';
 	import PropertiesPanel from './PropertiesPanel.svelte';
-	import AiGeneratorSidebar from './AiGeneratorSidebar.svelte';
 	import VersionHistoryModal from './VersionHistoryModal.svelte';
 	import { DEFAULT_TEMPLATE_BLUEPRINTS } from './defaultTemplates';
 	import type { CanvasItem, ComponentType, Template } from './types';
 	import type { PageData } from './$types';
 	import type { components } from '$lib/api-types';
+	import AiGeneratorPopup from './AiGeneratorPopup.svelte';
+	import TimelineView from './TimelineView.svelte';
+	import type { GeneratorState, GenerationNode } from './AiGeneratorPopup.types';
+	import {
+		createEmptyGeneratorState,
+		loadGeneratorState,
+		saveGeneratorState,
+		clearGeneratorState,
+		createGenerationNode,
+		addGenerationToTree,
+		findNodeById,
+		getChatHistory
+	} from './aiGeneratorStore';
 	let { data } = $props<{ data: PageData }>();
 	let templates = $state<Template[]>([]);
 
@@ -53,6 +65,13 @@
 	let aiError = $state<string | null>(null);
 	let canvasItemsBackup = $state<CanvasItem[] | null>(null);
 	let hasUndoAvailable = $derived(canvasItemsBackup !== null);
+
+	let generatorState = $state<GeneratorState>(loadGeneratorState());
+
+	// Persist state changes whenever generatorState changes
+	$effect(() => {
+		saveGeneratorState(generatorState);
+	});
 
 	let showHistory = $state(false);
 	let historyVersions = $state<components['schemas']['TemplateVersionInfo'][]>([]);
@@ -580,94 +599,101 @@
 		hasUnsavedChanges = true;
 	}
 
-	async function generateLayoutFromPrompt() {
-		if (!aiPrompt.trim()) {
-			aiError = 'Please enter a prompt';
-			setTimeout(() => {
-				aiError = null;
-			}, 3000);
+	async function generateLayoutFromPrompt(prompt: string): Promise<void> {
+		if (!prompt.trim()) {
 			return;
 		}
 
-		aiLoading = true;
-		aiError = null;
+		// Build context from current canvas state
+		let canvasWidth = 800;
+		let canvasHeight = designCanvasHeight;
+
+		if (canvasRef) {
+			const rect = canvasRef.getBoundingClientRect();
+			canvasWidth = Math.round(rect.width);
+			canvasHeight = Math.round(rect.height);
+		}
+
+		const contextDescription = `Canvas dimensions: ${canvasWidth}x${canvasHeight}. Current components: ${JSON.stringify(canvasItems)}`;
+		const enrichedPrompt = `${prompt}\n\nCurrent canvas context: ${contextDescription}`;
+
+		// Store previous state for error recovery
+		const previousItems = [...canvasItems];
 
 		try {
-			let promptWithContext = '';
-
-			if (canvasRef) {
-				const rect = canvasRef.getBoundingClientRect();
-				const canvasWidth = Math.round(rect.width);
-				const canvasHeight = Math.round(rect.height);
-				promptWithContext += ` Canvas dimensions: ${canvasWidth}px width × ${canvasHeight}px height.`;
-
-				const componentDimensions: Record<string, { width: number; height: number }> = {
-					text_input: { width: 260, height: 50 },
-					checkbox: { width: 100, height: 60 },
-					temperature: { width: 440, height: 80 },
-					dropdown: { width: 160, height: 60 },
-					label: { width: 100, height: 40 }
-				};
-
-				const componentSizes = componentTypes
-					.map((comp) => {
-						const dims = componentDimensions[comp.type] || { width: 150, height: 40 };
-						return `${comp.name} (${comp.type}): ${dims.width}px × ${dims.height}px`;
-					})
-					.join(', ');
-
-				promptWithContext += ` Available components with typical sizes: ${componentSizes}.`;
-				promptWithContext += ` User prompt: \n ${aiPrompt}`;
-			}
-
 			const { data, error } = await api.POST('/llm/generate-layout', {
 				body: {
-					user_prompt: promptWithContext
+					user_prompt: enrichedPrompt
 				}
 			});
 
 			if (error) {
-				aiError = 'Failed to generate layout';
-				setTimeout(() => {
-					aiError = null;
-				}, 3000);
-				aiLoading = false;
-				return;
+				throw new Error('Generation failed');
 			}
 
 			if (!data || typeof data !== 'object') {
-				aiError = 'Invalid response from backend';
-				setTimeout(() => {
-					aiError = null;
-				}, 3000);
-				aiLoading = false;
-				return;
+				throw new Error('Invalid response from backend');
 			}
 
 			const layoutObj = data as { layout?: { template_layout?: unknown } };
 			const layoutData = layoutObj.layout?.template_layout;
 
 			if (!Array.isArray(layoutData)) {
-				aiError = 'Invalid response from backend';
-				setTimeout(() => {
-					aiError = null;
-				}, 3000);
-				aiLoading = false;
-				return;
+				throw new Error('Invalid response from backend');
 			}
 
-			canvasItemsBackup = [...canvasItems];
-			canvasItems = layoutData.map(mapApiFieldToCanvasItem);
+			const generatedComponents = layoutData.map((field: any, index: number) =>
+				mapApiFieldToCanvasItem(field, index)
+			);
+
+			// Create generation node - convert to AiGeneratorPopup.types.CanvasItem format
+			const nodeCanvasItems: import('./AiGeneratorPopup.types').CanvasItem[] =
+				generatedComponents.map((item) => ({
+					id: item.id,
+					type: item.type,
+					position: { x: item.x, y: item.y },
+					props: item.props
+				}));
+
+			const previousNodeItems: import('./AiGeneratorPopup.types').CanvasItem[] = previousItems.map(
+				(item) => ({
+					id: item.id,
+					type: item.type,
+					position: { x: item.x, y: item.y },
+					props: item.props
+				})
+			);
+
+			const newNode = createGenerationNode(
+				prompt,
+				nodeCanvasItems,
+				previousNodeItems,
+				generatorState.currentNodeId
+			);
+
+			// Add to tree
+			if (!generatorState.tree) {
+				generatorState.tree = newNode;
+				generatorState.currentNodeId = newNode.id;
+			} else {
+				generatorState.tree = addGenerationToTree(
+					generatorState.tree,
+					generatorState.currentNodeId || generatorState.tree.id,
+					newNode
+				);
+				generatorState.currentNodeId = newNode.id;
+			}
+
+			// Update canvas with generated items
+			canvasItems = generatedComponents;
 			selectedItemId = null;
 			hasUnsavedChanges = true;
-			aiPrompt = '';
-			aiLoading = false;
-		} catch (e) {
-			aiError = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
-			setTimeout(() => {
-				aiError = null;
-			}, 3000);
-			aiLoading = false;
+
+			saveGeneratorState(generatorState);
+		} catch (error) {
+			console.error('Generation failed:', error);
+			// Restore previous state on error
+			canvasItems = previousItems;
 		}
 	}
 
@@ -677,6 +703,50 @@
 			canvasItemsBackup = null;
 			selectedItemId = null;
 		}
+	}
+
+	function handleAiBranch(parentNodeId: string): void {
+		// Branching just switches to that node; next generation creates sibling
+		switchAiGeneration(parentNodeId);
+	}
+
+	function handleAiRevert(nodeId: string): void {
+		// Restore canvas to state before that generation
+		const node = findNodeById(generatorState.tree, nodeId);
+		if (node) {
+			// Convert from AiGeneratorPopup.types.CanvasItem to types.CanvasItem
+			canvasItems = node.canvasStateAtGeneration.map((item) => ({
+				id: item.id,
+				type: item.type,
+				x: item.position.x,
+				y: item.position.y,
+				props: item.props || {}
+			}));
+			generatorState.currentNodeId = nodeId;
+			saveGeneratorState(generatorState);
+		}
+	}
+
+	function switchAiGeneration(nodeId: string): void {
+		// Switch to a different generation node
+		const node = findNodeById(generatorState.tree, nodeId);
+		if (node) {
+			generatorState.currentNodeId = nodeId;
+			// Restore canvas to this generation's post-state
+			// Convert from AiGeneratorPopup.types.CanvasItem to types.CanvasItem
+			canvasItems = node.response.map((item) => ({
+				id: item.id,
+				type: item.type,
+				x: item.position.x,
+				y: item.position.y,
+				props: item.props || {}
+			}));
+			saveGeneratorState(generatorState);
+		}
+	}
+
+	function handleAiGenerate(prompt: string): void {
+		generateLayoutFromPrompt(prompt);
 	}
 
 	let leftPaletteHeight = $state<number | null>(null);
@@ -919,16 +989,44 @@
 				role="separator"
 				aria-orientation="horizontal"
 			></div>
-			<div class="flex-1 overflow-auto">
-				<AiGeneratorSidebar
-					bind:aiPrompt
-					onGenerateLayout={generateLayoutFromPrompt}
-					onUndoGeneration={undoGeneration}
-					{aiLoading}
-					{aiError}
-					{hasUndoAvailable}
-				/>
+			<div class="flex flex-1 flex-col overflow-auto">
+				<div class="ai-generator-button-container">
+					<button
+						class="ai-generator-btn"
+						onclick={() => {
+							generatorState.isOpen = true;
+							generatorState.isMinimized = false;
+						}}
+						title="Open AI Generator"
+					>
+						✨ AI Generator
+					</button>
+				</div>
 			</div>
+
+			{#if generatorState.isOpen}
+				<AiGeneratorPopup
+					bind:generatorState
+					onGenerate={handleAiGenerate}
+					onBranch={handleAiBranch}
+					onRevert={handleAiRevert}
+					onMinimize={() => {
+						generatorState.isMinimized = true;
+					}}
+					onClose={() => {
+						generatorState = createEmptyGeneratorState();
+						clearGeneratorState();
+					}}
+					onPositionChange={(pos) => {
+						generatorState.position = pos;
+						saveGeneratorState(generatorState);
+					}}
+					on:selectNode={(e) => {
+						const nodeId = (e as any).detail;
+						switchAiGeneration(nodeId);
+					}}
+				/>
+			{/if}
 		</div>
 
 		<!-- Canvas Area -->
@@ -1026,5 +1124,28 @@
 		height: 24px;
 		background-color: var(--border-primary);
 		margin: 0 0.5rem;
+	}
+
+	.ai-generator-button-container {
+		padding: 12px;
+		border-top: 1px solid #eee;
+	}
+
+	.ai-generator-btn {
+		width: 100%;
+		padding: 10px;
+		background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+		color: white;
+		border: none;
+		border-radius: 6px;
+		font-weight: 600;
+		font-size: 14px;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.ai-generator-btn:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 	}
 </style>
