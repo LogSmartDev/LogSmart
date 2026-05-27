@@ -1,7 +1,5 @@
 use crate::db;
-use axum::http::StatusCode;
 use chrono::{DateTime, Duration, Utc};
-use serde_json::json;
 use sqlx::PgPool;
 
 pub struct ClockService;
@@ -26,31 +24,24 @@ impl ClockService {
         pool: &PgPool,
         user_id: &str,
         company_id: &str,
-    ) -> Result<db::ClockEvent, (StatusCode, serde_json::Value)> {
+    ) -> Result<db::ClockEvent, crate::error::AppError> {
         // Check if user already has an open clock-in
         let current = db::get_clock_status(pool, user_id).await.map_err(|e| {
             tracing::error!("Database error checking clock status: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Database error"}),
-            )
+            crate::error::AppError::Internal("Database error".to_string())
         })?;
 
         if let Some(ref event) = current
             && event.is_clocked_in()
         {
-            return Err((
-                StatusCode::CONFLICT,
-                json!({"error": "You are already clocked in"}),
+            return Err(crate::error::AppError::Conflict(
+                "You are already clocked in".to_string(),
             ));
         }
 
         let event = db::clock_in(pool, user_id, company_id).await.map_err(|e| {
             tracing::error!("Database error clocking in: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Failed to clock in"}),
-            )
+            crate::error::AppError::Internal("Failed to clock in".to_string())
         })?;
 
         Ok(event)
@@ -63,26 +54,21 @@ impl ClockService {
     pub async fn clock_out(
         pool: &PgPool,
         user_id: &str,
-    ) -> Result<db::ClockEvent, (StatusCode, serde_json::Value)> {
+    ) -> Result<db::ClockEvent, crate::error::AppError> {
         let current = db::get_clock_status(pool, user_id).await.map_err(|e| {
             tracing::error!("Database error checking clock status: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Database error"}),
-            )
+            crate::error::AppError::Internal("Database error".to_string())
         })?;
 
         let Some(current_event) = current else {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                json!({"error": "You are not currently clocked in"}),
+            return Err(crate::error::AppError::BadRequest(
+                "You are not currently clocked in".to_string(),
             ));
         };
 
         if !current_event.is_clocked_in() {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                json!({"error": "You are not currently clocked in"}),
+            return Err(crate::error::AppError::BadRequest(
+                "You are not currently clocked in".to_string(),
             ));
         }
 
@@ -93,15 +79,11 @@ impl ClockService {
             .await
             .map_err(|e| {
                 tracing::error!("Database error clocking out: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Failed to clock out"}),
-                )
+                crate::error::AppError::Internal("Failed to clock out".to_string())
             })?;
 
-        event.ok_or((
-            StatusCode::BAD_REQUEST,
-            json!({"error": "You are not currently clocked in"}),
+        event.ok_or(crate::error::AppError::BadRequest(
+            "You are not currently clocked in".to_string(),
         ))
     }
 
@@ -112,24 +94,17 @@ impl ClockService {
     pub async fn get_status(
         pool: &PgPool,
         user_id: &str,
-    ) -> Result<(Option<db::ClockEvent>, Vec<db::ClockEvent>), (StatusCode, serde_json::Value)>
-    {
+    ) -> Result<(Option<db::ClockEvent>, Vec<db::ClockEvent>), crate::error::AppError> {
         let current = db::get_clock_status(pool, user_id).await.map_err(|e| {
             tracing::error!("Database error fetching clock status: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Database error"}),
-            )
+            crate::error::AppError::Internal("Database error".to_string())
         })?;
 
         let recent = db::get_recent_clock_events(pool, user_id, 5)
             .await
             .map_err(|e| {
                 tracing::error!("Database error fetching recent clock events: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Database error"}),
-                )
+                crate::error::AppError::Internal("Database error".to_string())
             })?;
 
         Ok((current, recent))
@@ -143,17 +118,13 @@ impl ClockService {
         branch_id: Option<String>,
         limit: Option<i64>,
         cursor: Option<String>,
-    ) -> Result<(Vec<db::CompanyClockEventRow>, Option<String>), (StatusCode, serde_json::Value)>
-    {
+    ) -> Result<(Vec<db::CompanyClockEventRow>, Option<String>), crate::error::AppError> {
         let (events, next_cursor) =
             db::get_company_clock_events(pool, company_id, from, to, branch_id, limit, cursor)
                 .await
                 .map_err(|e| {
                     tracing::error!("Database error fetching company clock events: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({"error": "Database error"}),
-                    )
+                    crate::error::AppError::Internal("Database error".to_string())
                 })?;
         Ok((events, next_cursor))
     }

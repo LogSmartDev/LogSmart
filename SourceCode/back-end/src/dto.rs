@@ -4,6 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 #[macro_export]
 macro_rules! derive_from {
@@ -112,20 +113,25 @@ impl From<db::BranchWithDeletionStatus> for BranchDto {
     }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateBranchRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "London Office")]
     pub name: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "123 Regent St, London")]
     pub address: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateBranchRequest {
+    #[validate(length(min = 1, max = 36), custom(function = "validate_uuid_format"))]
     #[schema(example = "550e8400-e29b-41d4-a716-446655440000")]
     pub branch_id: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "London Office")]
     pub name: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "123 Regent St, London")]
     pub address: String,
 }
@@ -299,18 +305,24 @@ pub struct SecurityLogsResponse {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct RegisterRequest {
+    #[validate(email)]
     #[schema(example = "admin@example.com")]
     pub email: String,
+    #[validate(length(min = 1, max = 100))]
     #[schema(example = "John")]
     pub first_name: String,
+    #[validate(length(min = 1, max = 100))]
     #[schema(example = "Doe")]
     pub last_name: String,
+    #[validate(length(min = 8))]
     #[schema(example = "SecurePass123!")]
     pub password: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Example Corp")]
     pub company_name: String,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "123 Main St, City, Country")]
     pub company_address: String,
 }
@@ -334,8 +346,9 @@ pub struct VerifyTokenRequest {
     pub token: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct AddTemplateRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Kitchen Daily Log")]
     pub template_name: String,
     #[schema(example = "[\"field1\", \"field2\"]")]
@@ -351,14 +364,16 @@ pub struct UpdateTemplateResponse {
     pub message: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct UpdateTemplateRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Kitchen Daily Log")]
     pub template_name: String,
     #[schema(example = "[\"field1\", \"field2\"]")]
     pub template_layout: Option<logs_db::TemplateLayout>,
     #[schema(example = "{\"frequency\": \"daily\", \"time\": \"08:00\"}")]
     pub schedule: Option<logs_db::Schedule>,
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "Major Update")]
     pub version_name: Option<String>,
     #[schema(example = "branch-uuid-here")]
@@ -403,16 +418,22 @@ pub struct GetAllTemplatesResponse {
     pub templates: Vec<TemplateInfo>,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct LoginRequest {
+    #[validate(email)]
     #[schema(example = "admin@example.com")]
     pub email: String,
+    #[validate(
+        length(min = 8, max = 128),
+        custom(function = "validate_password_policy_attr")
+    )]
     #[schema(example = "SecurePass123!")]
     pub password: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct InviteUserRequest {
+    #[validate(email)]
     #[schema(example = "newmember@example.com")]
     pub email: String,
     #[schema(example = "staff")]
@@ -421,14 +442,21 @@ pub struct InviteUserRequest {
     pub branch_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct AcceptInvitationRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "invitation-token-here")]
     pub token: String,
+    #[validate(length(min = 1, max = 100))]
     #[schema(example = "Alice")]
     pub first_name: String,
+    #[validate(length(min = 1, max = 100))]
     #[schema(example = "Smith")]
     pub last_name: String,
+    #[validate(
+        length(min = 8, max = 128),
+        custom(function = "validate_password_policy_attr")
+    )]
     #[schema(example = "MemberPass123!")]
     pub password: String,
 }
@@ -515,8 +543,9 @@ pub struct UpdateProfileRequest {
     pub last_name: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RequestPasswordResetRequest {
+    #[validate(email)]
     #[schema(example = "user@example.com")]
     pub email: String,
 }
@@ -545,10 +574,15 @@ pub struct PasswordResetResponse {
     pub message: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ResetPasswordRequest {
+    #[validate(length(min = 1, max = 255))]
     #[schema(example = "reset-token-here")]
     pub token: String,
+    #[validate(
+        length(min = 8, max = 128),
+        custom(function = "validate_password_policy_attr")
+    )]
     #[schema(example = "NewPassword123!")]
     pub new_password: String,
 }
@@ -877,4 +911,64 @@ pub struct UpdateCompanyRequest {
 pub struct ExportResponse {
     pub message: String,
     pub exported_at: chrono::DateTime<chrono::Utc>,
+}
+
+// Custom validator for password policy
+pub fn validate_password_policy_attr(password: &str) -> Result<(), validator::ValidationError> {
+    if password.len() < 8 {
+        return Err(validator::ValidationError::new("password_too_short"));
+    }
+
+    if password.len() > 128 {
+        return Err(validator::ValidationError::new("password_too_long"));
+    }
+
+    let has_uppercase = password.chars().any(char::is_uppercase);
+    let has_lowercase = password.chars().any(char::is_lowercase);
+    let has_digit = password.chars().any(char::is_numeric);
+    let has_special = password.chars().any(|c| !c.is_alphanumeric());
+
+    if !has_uppercase {
+        return Err(validator::ValidationError::new("password_no_uppercase"));
+    }
+
+    if !has_lowercase {
+        return Err(validator::ValidationError::new("password_no_lowercase"));
+    }
+
+    if !has_digit {
+        return Err(validator::ValidationError::new("password_no_digit"));
+    }
+
+    if !has_special {
+        return Err(validator::ValidationError::new("password_no_special"));
+    }
+
+    Ok(())
+}
+
+// Custom validator for UUID format
+pub fn validate_uuid_format(uuid: &str) -> Result<(), validator::ValidationError> {
+    // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    // Simple check: must be 36 chars with hyphens at positions 8, 13, 18, 23
+    if uuid.len() != 36 {
+        return Err(validator::ValidationError::new("invalid_uuid_length"));
+    }
+
+    let bytes = uuid.as_bytes();
+    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
+        return Err(validator::ValidationError::new("invalid_uuid_format"));
+    }
+
+    // Check that all other characters are valid hex
+    for (i, &b) in bytes.iter().enumerate() {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            continue;
+        }
+        if !b.is_ascii_hexdigit() {
+            return Err(validator::ValidationError::new("invalid_uuid_characters"));
+        }
+    }
+
+    Ok(())
 }

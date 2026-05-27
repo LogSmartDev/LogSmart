@@ -12,9 +12,8 @@ use crate::{
 use axum::{
     Json,
     extract::{Query, State},
-    http::StatusCode,
 };
-use serde_json::json;
+use validator::Validate;
 
 #[utoipa::path(
     post,
@@ -34,29 +33,32 @@ pub async fn add_template(
     BranchManagerUser(_claims, user): BranchManagerUser,
     State(state): State<AppState>,
     Json(payload): Json<AddTemplateRequest>,
-) -> Result<Json<AddTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<AddTemplateResponse>, crate::error::AppError> {
+    // Validate request payload
+    payload
+        .validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+
     // Branch managers can only create templates for their own branch
     if user.is_branch_manager() {
         if payload.branch_id.is_none() {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(json!({ "error": "Branch managers cannot create company-wide templates" })),
+            return Err(crate::error::AppError::Forbidden(
+                "Branch managers cannot create company-wide templates".to_string(),
             ));
         }
         if payload.branch_id != user.branch_id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(
-                    json!({ "error": "Branch managers can only create templates for their own branch" }),
-                ),
+            return Err(crate::error::AppError::Forbidden(
+                "Branch managers can only create templates for their own branch".to_string(),
             ));
         }
     }
 
-    let company_id = user.company_id.clone().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+    let company_id = user
+        .company_id
+        .clone()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     services::TemplateService::create_template(
         &state,
@@ -67,8 +69,7 @@ pub async fn add_template(
         &user.id,
         payload.branch_id,
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
 
     Ok(Json(AddTemplateResponse {
         message: "Template added successfully.".to_string(),
@@ -95,31 +96,29 @@ pub async fn get_template(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Query(payload): Query<GetTemplateRequest>,
-) -> Result<Json<GetTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.as_deref().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<GetTemplateResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .as_deref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     let (template_name, template_layout, version, version_name, branch_id) =
-        services::TemplateService::get_template(&state, company_id, &payload.template_name)
-            .await
-            .map_err(|(status, err)| (status, Json(err)))?;
+        services::TemplateService::get_template(&state, company_id, &payload.template_name).await?;
 
     if let Some(branch) = branch_id.clone() {
         // If the template is branch-specific, check if the user has access to that branch
         if let Some(user_branch_id) = &user.branch_id {
             if &branch != user_branch_id && !user.can_manage_company() {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    Json(json!({ "error": "User does not have access to this template" })),
+                return Err(crate::error::AppError::Forbidden(
+                    "User does not have access to this template".to_string(),
                 ));
             }
         } else if !user.can_manage_company() {
             // If the user is not associated with any branch and is not a company manager, deny access
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(json!({ "error": "User does not have access to this template" })),
+            return Err(crate::error::AppError::Forbidden(
+                "User does not have access to this template".to_string(),
             ));
         }
     }
@@ -149,11 +148,13 @@ pub async fn get_template(
 pub async fn get_all_templates(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
-) -> Result<Json<GetAllTemplatesResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.as_deref().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<GetAllTemplatesResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .as_deref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     let templates = services::TemplateService::get_all_templates(
         &state,
@@ -164,8 +165,7 @@ pub async fn get_all_templates(
             None
         },
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
 
     let response_templates = templates
         .into_iter()
@@ -203,7 +203,12 @@ pub async fn update_template(
     BranchManagerUser(_claims, user): BranchManagerUser,
     State(state): State<AppState>,
     Json(payload): Json<UpdateTemplateRequest>,
-) -> Result<Json<UpdateTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<UpdateTemplateResponse>, crate::error::AppError> {
+    // Validate request payload
+    payload
+        .validate()
+        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+
     services::TemplateService::update_template(
         &state,
         &payload.template_name,
@@ -219,8 +224,7 @@ pub async fn update_template(
             }
         }),
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
     Ok(Json(UpdateTemplateResponse {
         message: "Template updated successfully.".to_string(),
     }))
@@ -245,10 +249,9 @@ pub async fn get_template_versions(
     BranchManagerUser(_claims, user): BranchManagerUser,
     State(state): State<AppState>,
     Query(payload): Query<GetTemplateRequest>,
-) -> Result<Json<crate::dto::GetTemplateVersionsResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let versions = services::TemplateService::get_versions(&state, &payload.template_name, &user)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+) -> Result<Json<crate::dto::GetTemplateVersionsResponse>, crate::error::AppError> {
+    let versions =
+        services::TemplateService::get_versions(&state, &payload.template_name, &user).await?;
 
     let version_infos = versions
         .into_iter()
@@ -288,11 +291,13 @@ pub async fn restore_template_version(
     State(state): State<AppState>,
     Query(query): Query<GetTemplateRequest>,
     Json(payload): Json<crate::dto::RestoreTemplateVersionRequest>,
-) -> Result<Json<UpdateTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.as_ref().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<UpdateTemplateResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .as_ref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     services::TemplateService::restore_version(
         &state,
@@ -301,8 +306,7 @@ pub async fn restore_template_version(
         payload.version,
         &user,
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
 
     Ok(Json(UpdateTemplateResponse {
         message: format!("Template restored to version {}", payload.version),
@@ -327,11 +331,13 @@ pub async fn rename_template(
     BranchManagerUser(_claims, user): BranchManagerUser,
     State(state): State<AppState>,
     Json(payload): Json<RenameTemplateRequest>,
-) -> Result<Json<RenameTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.as_ref().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<RenameTemplateResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .as_ref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     services::TemplateService::rename_template(
         &state,
@@ -341,8 +347,7 @@ pub async fn rename_template(
         user.branch_id.as_deref(),
         &user.role,
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
     Ok(Json(RenameTemplateResponse {
         message: "Template renamed successfully.".to_string(),
     }))
@@ -368,11 +373,13 @@ pub async fn delete_template(
     BranchManagerUser(_claims, user): BranchManagerUser,
     State(state): State<AppState>,
     Query(payload): Query<DeleteTemplateRequest>,
-) -> Result<Json<DeleteTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.as_ref().ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<DeleteTemplateResponse>, crate::error::AppError> {
+    let company_id = user
+        .company_id
+        .as_ref()
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
+        ))?;
 
     services::TemplateService::delete_template(
         &state,
@@ -381,8 +388,7 @@ pub async fn delete_template(
         user.branch_id.as_deref(),
         &user.role,
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
     Ok(Json(DeleteTemplateResponse {
         message: "Template deleted successfully.".to_string(),
     }))

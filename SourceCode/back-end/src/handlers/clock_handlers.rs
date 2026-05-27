@@ -11,10 +11,8 @@ use crate::{
 use axum::{
     Json,
     extract::{Query, State},
-    http::StatusCode,
 };
 use serde::Deserialize;
-use serde_json::json;
 
 #[utoipa::path(
     post,
@@ -35,24 +33,18 @@ use serde_json::json;
 pub async fn clock_in(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
-) -> Result<Json<ClockEventResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<ClockEventResponse>, crate::error::AppError> {
     let company_id = db::get_user_company_id(&state.postgres, &user.id)
         .await
         .map_err(|e| {
-            tracing::error!("Database error fetching user company ID: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Database error" })),
-            )
+            tracing::error!("Error: {:?}", e);
+            crate::error::AppError::Internal("Database error".to_string())
         })?
-        .ok_or((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "User is not associated with a company" })),
+        .ok_or(crate::error::AppError::Forbidden(
+            "User is not associated with a company".to_string(),
         ))?;
 
-    let event = services::ClockService::clock_in(&state.postgres, &user.id, &company_id)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+    let event = services::ClockService::clock_in(&state.postgres, &user.id, &company_id).await?;
 
     Ok(Json(ClockEventResponse::from(event)))
 }
@@ -76,10 +68,8 @@ pub async fn clock_in(
 pub async fn clock_out(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
-) -> Result<Json<ClockEventResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let event = services::ClockService::clock_out(&state.postgres, &user.id)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+) -> Result<Json<ClockEventResponse>, crate::error::AppError> {
+    let event = services::ClockService::clock_out(&state.postgres, &user.id).await?;
 
     Ok(Json(ClockEventResponse::from(event)))
 }
@@ -102,10 +92,8 @@ pub async fn clock_out(
 pub async fn get_clock_status(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
-) -> Result<Json<ClockStatusResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let (current, recent) = services::ClockService::get_status(&state.postgres, &user.id)
-        .await
-        .map_err(|(status, err)| (status, Json(err)))?;
+) -> Result<Json<ClockStatusResponse>, crate::error::AppError> {
+    let (current, recent) = services::ClockService::get_status(&state.postgres, &user.id).await?;
 
     let is_clocked_in = current
         .as_ref()
@@ -160,11 +148,8 @@ pub async fn get_company_clock_events(
     ReadCompanyUser(_claims, user): ReadCompanyUser,
     State(state): State<AppState>,
     Query(params): Query<CompanyClockQuery>,
-) -> Result<Json<CompanyClockEventsResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let company_id = user.company_id.ok_or((
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "User is not associated with a company" })),
-    ))?;
+) -> Result<Json<CompanyClockEventsResponse>, crate::error::AppError> {
+    let company_id = user.company_id_or_forbidden()?;
 
     let from = params
         .from
@@ -191,8 +176,7 @@ pub async fn get_company_clock_events(
         params.limit,
         params.cursor,
     )
-    .await
-    .map_err(|(status, err)| (status, Json(err)))?;
+    .await?;
 
     let events = events
         .into_iter()

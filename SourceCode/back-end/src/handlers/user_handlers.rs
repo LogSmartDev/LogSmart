@@ -7,7 +7,10 @@ use crate::{
     images_db,
     middleware::{AnyAuthUser, AuditRequestContext, BranchManagerUser, ReadBranchUser},
     services::user_service::UserService,
-    utils::{AuditLogger, err_bad_request, err_forbidden, err_internal, err_not_found},
+    utils::{
+        AuditLogger, err_bad_request, err_forbidden, err_internal, err_not_found,
+        infer_content_type,
+    },
 };
 use axum::{
     Json,
@@ -35,7 +38,7 @@ use serde_json::json;
 pub async fn get_company_members(
     ReadBranchUser(_claims, user): ReadBranchUser,
     State(state): State<AppState>,
-) -> Result<Json<GetCompanyMembersResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<GetCompanyMembersResponse>, crate::error::AppError> {
     tracing::info!("get_company_members called for user_id: {}", user.id);
 
     let members = db::get_company_members_for_user(&state.postgres, &user.id)
@@ -87,7 +90,7 @@ pub async fn admin_update_member_profile(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     Json(payload): Json<AdminUpdateMemberRequest>,
-) -> Result<Json<GetCompanyMembersResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<GetCompanyMembersResponse>, crate::error::AppError> {
     if payload.first_name.is_empty() || payload.last_name.is_empty() {
         return Err(err_bad_request("First name and last name cannot be empty"));
     }
@@ -114,8 +117,7 @@ pub async fn admin_update_member_profile(
         payload.branch_id,
         payload.profile_picture_id,
     )
-    .await
-    .map_err(|(status, error)| (status, Json(error)))?;
+    .await?;
 
     // Invalidate cache for the updated user
     state.user_cache.invalidate(&updated_user.id).await;
@@ -159,10 +161,9 @@ pub async fn admin_delete_member(
     AuditRequestContext(audit_ctx): AuditRequestContext,
     State(state): State<AppState>,
     Json(payload): Json<RemoveMemberRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let deleted_user_id = UserService::admin_delete_member(&state.postgres, &user, &payload.email)
-        .await
-        .map_err(|(status, error)| (status, Json(error)))?;
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
+    let deleted_user_id =
+        UserService::admin_delete_member(&state.postgres, &user, &payload.email).await?;
 
     // Invalidate cache for the deleted user
     state.user_cache.invalidate(&deleted_user_id).await;
@@ -202,7 +203,7 @@ pub async fn upload_profile_picture(
     State(state): State<AppState>,
     Query(query): Query<AdminProfilePictureQuery>,
     body: Bytes,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     let data = body.to_vec();
 
     if data.len() > 10 * 1024 * 1024 {
@@ -227,8 +228,7 @@ pub async fn upload_profile_picture(
 
         let target =
             UserService::get_user_by_email(&state.postgres, query.email.as_deref().unwrap_or(""))
-                .await
-                .map_err(|e| (e.0, Json(e.1)))?;
+                .await?;
 
         if user.is_company_manager() && user.company_id != target.company_id {
             return Err(err_forbidden("Cannot update users from other companies"));
@@ -281,18 +281,6 @@ pub async fn upload_profile_picture(
     ))
 }
 
-fn infer_content_type(data: &[u8]) -> String {
-    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        "image/png".to_string()
-    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        "image/jpeg".to_string()
-    } else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" {
-        "image/webp".to_string()
-    } else {
-        "application/octet-stream".to_string()
-    }
-}
-
 #[utoipa::path(
     get,
     path = "/auth/profile-picture/{file_id}",
@@ -313,7 +301,7 @@ pub async fn get_profile_picture(
         [(header::HeaderName, header::HeaderValue); 1],
         Vec<u8>,
     ),
-    (StatusCode, Json<serde_json::Value>),
+    crate::error::AppError,
 > {
     if let Some((content_type, data)) = images_db::get_profile_picture(&state.mongodb, &file_id)
         .await
@@ -343,7 +331,7 @@ pub async fn delete_profile_picture_handler(
     AnyAuthUser(_claims, user): AnyAuthUser,
     State(state): State<AppState>,
     Query(query): Query<AdminProfilePictureQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, crate::error::AppError> {
     let (target_user_id, target_picture_id) = if query.email.as_deref().unwrap_or("").is_empty() {
         (user.id.clone(), user.profile_picture_id.clone())
     } else {
@@ -353,8 +341,7 @@ pub async fn delete_profile_picture_handler(
 
         let target =
             UserService::get_user_by_email(&state.postgres, query.email.as_deref().unwrap_or(""))
-                .await
-                .map_err(|e| (e.0, Json(e.1)))?;
+                .await?;
 
         if user.is_company_manager() && user.company_id != target.company_id {
             return Err(err_forbidden("Cannot update users from other companies"));

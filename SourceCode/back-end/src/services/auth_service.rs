@@ -1,20 +1,108 @@
 use crate::{
     auth::{generate_uuid6_token, hash_password, validate_password_policy, verify_password},
     db::{self, UserRole},
+    error::AppError,
     jwt_manager::JwtManager,
     utils::{AuditContext, AuditLogger},
 };
-use axum::http::StatusCode;
 use chrono::Duration;
-use serde_json::json;
 use sqlx::PgPool;
 
 #[cfg(test)]
 mod auth_service_tests {
-    #[tokio::test]
-    async fn test_auth_service_basic() {
-        // Basic test to ensure service compiles
-        assert!(true);
+    use super::*;
+
+    #[test]
+    fn test_hash_password_valid_input() {
+        let password = "SecurePass123!@#";
+        let result = hash_password(password);
+        assert!(result.is_ok());
+        let hash = result.unwrap();
+        assert!(!hash.is_empty());
+        assert!(hash.len() > 20); // Argon2 hashes are typically long
+    }
+
+    #[test]
+    fn test_hash_password_empty_input() {
+        // hash_password is a low-level function that hashes any input
+        // Empty strings can be hashed; validation happens at policy level
+        let password = "";
+        let result = hash_password(password);
+        assert!(result.is_ok());
+        let hash = result.unwrap();
+        assert!(!hash.is_empty());
+    }
+
+    #[test]
+    fn test_password_policy_valid_password() {
+        let password = "ValidPass123!@#";
+        let result = validate_password_policy(password);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_password_policy_too_short() {
+        let password = "Pass1!";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_password_policy_no_special_characters() {
+        let password = "ValidPassword123";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_password_policy_no_uppercase() {
+        let password = "validpass123!@#";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_password_policy_no_numbers() {
+        let password = "ValidPass!@#";
+        let result = validate_password_policy(password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_password_success() {
+        let password = "SecurePass123!@#";
+        let hash_result = hash_password(password);
+        assert!(hash_result.is_ok());
+        let hash = hash_result.unwrap();
+
+        let verify_result = verify_password(password, &hash);
+        assert!(verify_result.is_ok());
+        let is_valid = verify_result.unwrap();
+        assert!(is_valid);
+    }
+
+    #[test]
+    fn test_verify_password_failure() {
+        let password = "SecurePass123!@#";
+        let wrong_password = "WrongPass123!@#";
+        let hash_result = hash_password(password);
+        assert!(hash_result.is_ok());
+        let hash = hash_result.unwrap();
+
+        let verify_result = verify_password(wrong_password, &hash);
+        assert!(verify_result.is_ok());
+        let is_valid = verify_result.unwrap();
+        assert!(!is_valid);
+    }
+
+    #[test]
+    fn test_generate_uuid6_token() {
+        let token1 = generate_uuid6_token();
+        let token2 = generate_uuid6_token();
+
+        assert!(!token1.is_empty());
+        assert!(!token2.is_empty());
+        assert_ne!(token1, token2);
     }
 }
 
@@ -38,21 +126,15 @@ impl AuthService {
         company_address: &str,
         ip_address: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<(db::UserRecord, String), (StatusCode, serde_json::Value)> {
+    ) -> Result<(db::UserRecord, String), AppError> {
         let mut tx = db_pool.begin().await.map_err(|e| {
             tracing::error!("Failed to begin transaction: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Database transaction failed"}),
-            )
+            AppError::Internal("Database transaction failed".to_string())
         })?;
 
         let password_hash = hash_password(password).map_err(|e| {
             tracing::error!("Failed to hash password: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Password processing failed"}),
-            )
+            AppError::Internal("Password processing failed".to_string())
         })?;
 
         let company = db::create_company(
@@ -63,10 +145,7 @@ impl AuthService {
         .await
         .map_err(|e| {
             tracing::error!("Failed to create company: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Company creation failed"}),
-            )
+            AppError::Internal("Company creation failed".to_string())
         })?;
 
         let mut user = db::create_user(
@@ -81,18 +160,12 @@ impl AuthService {
         .await
         .map_err(|e| {
             tracing::error!("Failed to create user: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "User creation failed"}),
-            )
+            AppError::Internal("User creation failed".to_string())
         })?;
 
         tx.commit().await.map_err(|e| {
             tracing::error!("Failed to commit transaction: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Transaction commit failed"}),
-            )
+            AppError::Internal("Transaction commit failed".to_string())
         })?;
 
         user.company_name = Some(company_name.to_string());
@@ -101,10 +174,7 @@ impl AuthService {
             .generate_token(user.id.as_str(), 24)
             .map_err(|e| {
                 tracing::error!("Failed to generate JWT token: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Token generation failed"}),
-                )
+                AppError::Internal("Token generation failed".to_string())
             })?;
 
         // Log the registration event
@@ -127,130 +197,6 @@ impl AuthService {
         Ok((user, token))
     }
 
-    /// Performs user login and returns a JWT token.
-    ///
-    /// # Errors
-    /// Returns an error if credentials are invalid, account is deactivated, or if processing fails.
-    ///
-    /// # Panics
-    /// Panics if JSON serialization of the internal response fails.
-    pub async fn login(
-        db_pool: &PgPool,
-        email: &str,
-        password: &str,
-        user_agent: Option<String>,
-        ip_address: Option<String>,
-    ) -> Result<(String, String, UserRole), (StatusCode, serde_json::Value)> {
-        let user = db::get_user_by_email(db_pool, email)
-            .await
-            .map_err(|e| {
-                tracing::error!("Database error during login: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Database error"}),
-                )
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    json!({"error": "Invalid credentials"}),
-                )
-            })?;
-
-        if user.deleted_at.is_some() {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({"error": "Account deactivated"}),
-            ));
-        }
-
-        if user.company_deleted_at.is_some() {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({"error": "Your company has been deleted. Please contact support."}),
-            ));
-        }
-
-        let password_valid = if let Some(password_hash) = &user.password_hash {
-            verify_password(password, password_hash).map_err(|e| {
-                tracing::error!("Password verification error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Authentication failed"}),
-                )
-            })?
-        } else {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({"error": "OAuth-only account - password login not available"}),
-            ));
-        };
-
-        if !password_valid {
-            AuditLogger::log_login_failed(
-                db_pool,
-                Some(user.id.clone()),
-                email.to_string(),
-                crate::audit_ctx!(
-                    &AuditContext {
-                        ip_address,
-                        user_agent,
-                        ..AuditContext::default()
-                    },
-                    actor: &user
-                ),
-                "Invalid password",
-            )
-            .await;
-
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({"error": "Invalid credentials"}),
-            ));
-        }
-
-        let token = JwtManager::get_config()
-            .generate_token(user.id.as_str(), 24)
-            .map_err(|e| {
-                tracing::error!("Failed to generate login JWT token: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Failed to generate token"}),
-                )
-            })?;
-
-        // Login time update functionality not yet implemented in db module
-        // TODO: Implement update_user_login_time function in db module
-
-        AuditLogger::log_login_success(
-            db_pool,
-            user.id.clone(),
-            email.to_string(),
-            crate::audit_ctx!(
-                &AuditContext {
-                    ip_address,
-                    user_agent,
-                    ..AuditContext::default()
-                },
-                actor: &user
-            ),
-        )
-        .await;
-
-        let response = serde_json::json!({
-            "message": "Login successful",
-            "user_id": user.id,
-            "token": token,
-            "role": user.get_role().to_string(),
-        });
-
-        Ok((
-            serde_json::to_string(&response).unwrap(),
-            token,
-            user.get_role(),
-        ))
-    }
-
     /// Requests a password reset for a user.
     ///
     /// # Errors
@@ -260,13 +206,10 @@ impl AuthService {
         email: &str,
         ip_address: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         let user = db::get_user_by_email(db_pool, email).await.map_err(|e| {
             tracing::error!("Database error: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Database error" }),
-            )
+            AppError::Internal("Database error".to_string())
         })?;
 
         if let Some(user_record) = user {
@@ -282,25 +225,21 @@ impl AuthService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to create password reset token: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to process password reset request" }),
-                )
+                AppError::Internal("Failed to process password reset request".to_string())
             })?;
 
             let reset_link = format!(
                 "{}/reset-password?token={}",
-                "https://logsmart.app", reset_token
+                std::env::var("FRONTEND_URL")
+                    .unwrap_or_else(|_| "https://logsmart.app".to_string()),
+                reset_token
             );
 
             crate::email::send_password_reset_email(&user_record.email, &reset_link)
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to send password reset email: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({ "error": "Failed to send password reset email" }),
-                    )
+                    AppError::Internal("Failed to send password reset email".to_string())
                 })?;
 
             AuditLogger::log_password_reset_requested(
@@ -343,25 +282,14 @@ impl AuthService {
     ///
     /// # Errors
     /// Returns an error if the token is invalid, expired, or if database operations fail.
-    pub async fn validate_reset_token(
-        db_pool: &PgPool,
-        token: &str,
-    ) -> Result<bool, (StatusCode, serde_json::Value)> {
+    pub async fn validate_reset_token(db_pool: &PgPool, token: &str) -> Result<bool, AppError> {
         let reset_record = db::get_password_reset_by_token(db_pool, token)
             .await
-            .map_err(|_| {
-                tracing::error!("Failed to get password reset record");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Failed to validate reset token"}),
-                )
+            .map_err(|e| {
+                tracing::error!("Failed to get password reset record: {:?}", e);
+                AppError::Internal("Failed to validate reset token".to_string())
             })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    json!({"error": "Invalid or expired reset token"}),
-                )
-            })?;
+            .ok_or_else(|| AppError::Unauthorized("Invalid or expired reset token".to_string()))?;
 
         // reset_record returns (reset_id, user_id) tuple
         let (reset_id, _user_id) = reset_record;
@@ -371,10 +299,7 @@ impl AuthService {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to mark reset token as used: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Failed to process token"}),
-                )
+                AppError::Internal("Failed to process token".to_string())
             })?;
 
         Ok(true)
@@ -388,52 +313,34 @@ impl AuthService {
         db_pool: &PgPool,
         reset_token: &str,
         new_password: &str,
-    ) -> Result<String, (StatusCode, serde_json::Value)> {
-        validate_password_policy(new_password)
-            .map_err(|e| (StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })))?;
+    ) -> Result<String, AppError> {
+        validate_password_policy(new_password).map_err(|e| AppError::BadRequest(e.to_string()))?;
 
         let (reset_id, user_id) = db::get_password_reset_by_token(db_pool, reset_token)
             .await
             .map_err(|e| {
                 tracing::error!("Database error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Database error" }),
-                )
+                AppError::Internal("Database error".to_string())
             })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    json!({ "error": "Invalid or expired reset token" }),
-                )
-            })?;
+            .ok_or_else(|| AppError::Unauthorized("Invalid or expired reset token".to_string()))?;
 
         let password_hash = hash_password(new_password).map_err(|e| {
             tracing::error!("Failed to hash password: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Failed to process password" }),
-            )
+            AppError::Internal("Failed to process password".to_string())
         })?;
 
         db::update_user_password(db_pool, &user_id, password_hash)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to update password: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to update password" }),
-                )
+                AppError::Internal("Failed to update password".to_string())
             })?;
 
         db::mark_password_reset_used(db_pool, &reset_id)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to mark reset token as used: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Failed to process request" }),
-                )
+                AppError::Internal("Failed to process request".to_string())
             })?;
 
         AuditLogger::log_password_reset_completed(
@@ -458,61 +365,46 @@ impl AuthService {
         user_id: &str,
         current_password: &str,
         new_password: &str,
-    ) -> Result<(), (StatusCode, serde_json::Value)> {
+    ) -> Result<(), AppError> {
         let user = db::get_user_by_id(db_pool, user_id)
             .await
             .map_err(|e| {
                 tracing::error!("Database error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Database error"}),
-                )
+                AppError::Internal("Database error".to_string())
             })?
-            .ok_or_else(|| (StatusCode::NOT_FOUND, json!({"error": "User not found"})))?;
+            .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
         // Validate current password
         let is_current_valid = if let Some(password_hash) = &user.password_hash {
             verify_password(current_password, password_hash).map_err(|e| {
                 tracing::error!("Password verification error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Password verification failed"}),
-                )
+                AppError::Internal("Password verification failed".to_string())
             })?
         } else {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                json!({"error": "OAuth-only account - password change not available"}),
+            return Err(AppError::BadRequest(
+                "OAuth-only account - password change not available".to_string(),
             ));
         };
 
         if !is_current_valid {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({"error": "Current password is incorrect"}),
+            return Err(AppError::Unauthorized(
+                "Current password is incorrect".to_string(),
             ));
         }
 
         // Validate new password meets requirements
-        validate_password_policy(new_password)
-            .map_err(|e| (StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })))?;
+        validate_password_policy(new_password).map_err(|e| AppError::BadRequest(e.to_string()))?;
 
         let password_hash = hash_password(new_password).map_err(|e| {
             tracing::error!("Failed to hash new password: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "Password processing failed"}),
-            )
+            AppError::Internal("Password processing failed".to_string())
         })?;
 
         db::update_user_password(db_pool, user_id, password_hash)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to update password: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error": "Failed to update password"}),
-                )
+                AppError::Internal("Failed to update password".to_string())
             })?;
 
         AuditLogger::log_password_changed(
@@ -539,13 +431,10 @@ impl AuthService {
         password: &str,
         ip_address: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<(String, db::UserRecord), (StatusCode, serde_json::Value)> {
+    ) -> Result<(String, db::UserRecord), AppError> {
         let user = db::get_user_by_email(db_pool, email).await.map_err(|e| {
             tracing::error!("Database error during login lookup: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "Database error" }),
-            )
+            AppError::Internal("Database error".to_string())
         })?;
 
         // If user not found, log the failed attempt before returning error
@@ -565,35 +454,27 @@ impl AuthService {
                 "User not found",
             )
             .await;
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({ "error": "Invalid email or password" }),
+            return Err(AppError::Unauthorized(
+                "Invalid email or password".to_string(),
             ));
         }
 
         let user = user.unwrap();
 
         if user.deleted_at.is_some() {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({"error": "Account deactivated"}),
-            ));
+            return Err(AppError::Unauthorized("Account deactivated".to_string()));
         }
 
         if user.company_deleted_at.is_some() {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                json!({"error": "Your company has been deleted. Please contact support."}),
+            return Err(AppError::Unauthorized(
+                "Your company has been deleted. Please contact support.".to_string(),
             ));
         }
 
         if let Some(password_hash) = user.password_hash.as_ref() {
             let password_valid = verify_password(password, password_hash).map_err(|e| {
                 tracing::error!("Password verification error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({ "error": "Authentication failed" }),
-                )
+                AppError::Internal("Authentication failed".to_string())
             })?;
 
             if !password_valid {
@@ -612,9 +493,8 @@ impl AuthService {
                     "Invalid password",
                 )
                 .await;
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    json!({ "error": "Invalid email or password" }),
+                return Err(AppError::Unauthorized(
+                    "Invalid email or password".to_string(),
                 ));
             }
 
@@ -622,10 +502,7 @@ impl AuthService {
                 .generate_token(user.id.as_str(), 24)
                 .map_err(|e| {
                     tracing::error!("Failed to generate login JWT token: {:?}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({ "error": "Failed to generate token" }),
-                    )
+                    AppError::Internal("Failed to generate token".to_string())
                 })?;
 
             AuditLogger::log_login_success(
@@ -660,9 +537,8 @@ impl AuthService {
                 "OAuth-only account - password login not available",
             )
             .await;
-            Err((
-                StatusCode::UNAUTHORIZED,
-                json!({ "error": "This account uses OAuth login. Please sign in with Google." }),
+            Err(AppError::Unauthorized(
+                "This account uses OAuth login. Please sign in with Google.".to_string(),
             ))
         }
     }

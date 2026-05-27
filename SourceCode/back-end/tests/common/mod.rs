@@ -25,16 +25,6 @@ pub async fn setup_test_db() -> PgPool {
         .expect("Failed to create test database pool")
 }
 
-/// Common test utilities and re-exports
-// Note: mocks module is available but not all functions are re-exported
-// pub use mocks::*;
-
-// /// Test helper for creating test application
-// pub async fn create_test_app() ->  {
-//     let config = create_test_app_state().await;
-//     back_end::app::create_app(config).await
-// }
-
 /// Test helper for running database migrations.
 ///
 /// # Errors
