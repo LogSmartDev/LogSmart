@@ -1062,9 +1062,9 @@
 				aria-orientation="horizontal"
 			></div>
 			<div class="flex flex-1 flex-col overflow-auto">
-				<div class="ai-generator-button-container">
+				<div class="border-t-2 border-border-secondary px-3 py-3">
 					<button
-						class="ai-generator-btn"
+						class="w-full rounded border-2 border-button-primary bg-button-primary px-3 py-2 text-sm font-bold text-button-text transition-all duration-150 hover:brightness-90 active:brightness-75"
 						onclick={() => {
 							generatorState.isOpen = true;
 							generatorState.isMinimized = false;
@@ -1197,28 +1197,5 @@
 		height: 24px;
 		background-color: var(--border-primary);
 		margin: 0 0.5rem;
-	}
-
-	.ai-generator-button-container {
-		padding: 12px;
-		border-top: 1px solid #eee;
-	}
-
-	.ai-generator-btn {
-		width: 100%;
-		padding: 10px;
-		background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-		color: white;
-		border: none;
-		border-radius: 6px;
-		font-weight: 600;
-		font-size: 14px;
-		cursor: pointer;
-		transition: all 0.2s;
-	}
-
-	.ai-generator-btn:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 	}
 </style>

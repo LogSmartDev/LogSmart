@@ -1,5 +1,3 @@
-<!-- src/routes/(authenticated)/template-designer/AiGeneratorPopup.svelte -->
-
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type { GeneratorState, GenerationNode, CanvasItem } from './AiGeneratorPopup.types';
@@ -116,7 +114,6 @@
 	style="left: {generatorState.position.x}px; top: {generatorState.position
 		.y}px; display: {generatorState.isOpen && !generatorState.isMinimized ? 'flex' : 'none'};"
 >
-	<!-- Header -->
 	<div
 		class="header"
 		role="button"
@@ -126,14 +123,14 @@
 	>
 		<h2>AI Generator</h2>
 		<div class="header-buttons" data-no-drag>
-			<button class="header-btn" title="Minimize" onclick={onMinimize}> − </button>
-			<button class="header-btn close" title="Close" onclick={onClose}> × </button>
+			<button class="header-btn" title="Minimize" onclick={onMinimize}>─</button>
+			<button class="header-btn close" title="Close" onclick={onClose}>×</button>
 		</div>
 	</div>
 
 	<div class="content">
-		<!-- Timeline (left) -->
-		<div class="timeline">
+		<div class="timeline-panel">
+			<div class="timeline-header">History</div>
 			<TimelineView
 				tree={generatorState.tree}
 				currentNodeId={generatorState.currentNodeId}
@@ -141,30 +138,33 @@
 			/>
 		</div>
 
-		<!-- Chat (right) -->
 		<div class="chat-area">
 			<div class="chat-messages" bind:this={chatContainer}>
 				{#each chatHistory as node (node.id)}
-					<div class="message user-message">
-						<div class="message-label">You</div>
-						<div class="message-content">{node.prompt}</div>
-						<div class="message-time">{new Date(node.timestamp).toLocaleTimeString()}</div>
-					</div>
-					<div class="message ai-message">
-						<div class="message-label">AI Generator</div>
-						<div class="message-content">
-							{#if node.response.length === 0}
-								⏳ Generating...
-							{:else}
-								Generated {node.response.length} component{node.response.length !== 1 ? 's' : ''}
-							{/if}
+					<div class="message-group">
+						<div class="message user-message">
+							<div class="msg-label">You</div>
+							<div class="msg-bubble msg-bubble-user">{node.prompt}</div>
+							<div class="msg-time">{new Date(node.timestamp).toLocaleTimeString()}</div>
 						</div>
-						<div class="message-time">{new Date(node.timestamp).toLocaleTimeString()}</div>
+						<div class="message ai-message">
+							<div class="msg-label">AI Generator</div>
+							<div class="msg-bubble msg-bubble-ai">
+								{#if node.response.length === 0}
+									<span class="generating-indicator">
+										<span class="dot-pulse"></span>
+										Generating...
+									</span>
+								{:else}
+									Generated {node.response.length} component{node.response.length !== 1 ? 's' : ''}
+								{/if}
+							</div>
+							<div class="msg-time">{new Date(node.timestamp).toLocaleTimeString()}</div>
+						</div>
 					</div>
 				{/each}
 			</div>
 
-			<!-- Input -->
 			<div class="input-area" data-no-drag>
 				<textarea
 					class="prompt-input"
@@ -173,22 +173,22 @@
 					onkeydown={(e) => e.key === 'Enter' && e.ctrlKey && handleGenerate()}
 					disabled={isLoading}
 				></textarea>
-				<div class="button-group">
+				<div class="button-row">
 					<button
-						class="btn-primary"
+						class="btn btn-primary"
 						onclick={handleGenerate}
 						disabled={!prompt.trim() || isLoading}
 					>
-						{isLoading ? '⏳ Generating...' : 'Generate'}
+						{isLoading ? 'Generating...' : 'Generate'}
 					</button>
 					{#if canBranch}
-						<button class="btn-secondary" onclick={handleBranch} disabled={isLoading}>
-							Branch from here
+						<button class="btn btn-outline" onclick={handleBranch} disabled={isLoading}>
+							Branch
 						</button>
 					{/if}
 					{#if isNotCurrent}
-						<button class="btn-secondary" onclick={handleRevert} disabled={isLoading}>
-							Revert to this state
+						<button class="btn btn-outline" onclick={handleRevert} disabled={isLoading}>
+							Revert
 						</button>
 					{/if}
 				</div>
@@ -200,34 +200,36 @@
 <style>
 	.popup-container {
 		position: fixed;
-		width: 500px;
-		height: 600px;
-		background: white;
-		border: 1px solid #ccc;
+		width: 480px;
+		height: 560px;
+		background: var(--bg-primary);
+		border: 2px solid var(--border-primary);
 		border-radius: 8px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
 		display: flex;
 		flex-direction: column;
 		z-index: 1000;
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+		overflow: hidden;
 	}
 
 	.header {
-		padding: 12px 16px;
-		border-bottom: 1px solid #eee;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		padding: 12px 16px;
+		border-bottom: 2px solid var(--border-secondary);
+		background: var(--bg-primary);
 		cursor: move;
 		user-select: none;
-		background: #f9f9f9;
+		flex-shrink: 0;
 	}
 
 	.header h2 {
 		margin: 0;
 		font-size: 14px;
-		font-weight: 600;
-		color: #333;
+		font-weight: 700;
+		color: var(--text-primary);
+		letter-spacing: 0.01em;
 	}
 
 	.header-buttons {
@@ -238,22 +240,29 @@
 	.header-btn {
 		width: 28px;
 		height: 28px;
-		border: none;
+		border: 2px solid transparent;
 		background: transparent;
 		cursor: pointer;
-		font-size: 18px;
-		color: #666;
+		font-size: 16px;
+		line-height: 1;
+		color: var(--text-secondary);
 		border-radius: 4px;
-		transition: background 0.2s;
+		transition: all 0.15s ease;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.header-btn:hover {
-		background: #e0e0e0;
+		background: var(--bg-secondary);
+		border-color: var(--border-secondary);
+		color: var(--text-primary);
 	}
 
 	.header-btn.close:hover {
-		background: #ff4444;
-		color: white;
+		background: var(--error-bg);
+		border-color: var(--error);
+		color: var(--error);
 	}
 
 	.content {
@@ -262,12 +271,25 @@
 		overflow: hidden;
 	}
 
-	.timeline {
-		width: 80px;
-		border-right: 1px solid #eee;
+	.timeline-panel {
+		width: 72px;
+		border-right: 2px solid var(--border-secondary);
 		overflow-y: auto;
-		padding: 12px;
-		background: #fafafa;
+		padding: 12px 8px;
+		background: var(--bg-secondary);
+		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.timeline-header {
+		font-size: 10px;
+		font-weight: 700;
+		color: var(--text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		text-align: center;
 	}
 
 	.chat-area {
@@ -275,6 +297,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+		min-width: 0;
 	}
 
 	.chat-messages {
@@ -283,108 +306,168 @@
 		padding: 16px;
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
+		gap: 16px;
+	}
+
+	.message-group {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
 	}
 
 	.message {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 3px;
 	}
 
-	.user-message .message-content {
-		background: #e3f2fd;
-		color: #1976d2;
+	.msg-label {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.msg-bubble {
 		padding: 8px 12px;
 		border-radius: 6px;
+		font-size: 13px;
+		line-height: 1.45;
 		word-wrap: break-word;
 	}
 
-	.ai-message .message-content {
-		background: #f5f5f5;
-		color: #333;
-		padding: 8px 12px;
-		border-radius: 6px;
+	.msg-bubble-user {
+		background: var(--button-primary);
+		color: var(--button-text);
+		align-self: flex-start;
 	}
 
-	.message-label {
-		font-size: 12px;
-		font-weight: 600;
-		color: #666;
+	.msg-bubble-ai {
+		background: var(--bg-secondary);
+		border: 2px solid var(--border-secondary);
+		color: var(--text-primary);
 	}
 
-	.message-time {
-		font-size: 11px;
-		color: #999;
+	.msg-time {
+		font-size: 10px;
+		color: var(--text-secondary);
+	}
+
+	.generating-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.dot-pulse {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--button-primary);
+		animation: pulse 1.2s ease-in-out infinite;
+	}
+
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
+		50% {
+			opacity: 0.4;
+			transform: scale(0.7);
+		}
 	}
 
 	.input-area {
 		padding: 12px;
-		border-top: 1px solid #eee;
-		background: #fafafa;
+		border-top: 2px solid var(--border-secondary);
+		background: var(--bg-secondary);
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
+		flex-shrink: 0;
 	}
 
 	.prompt-input {
 		width: 100%;
-		min-height: 60px;
-		padding: 8px;
-		border: 1px solid #ddd;
+		min-height: 56px;
+		padding: 8px 10px;
+		border: 2px solid var(--border-primary);
 		border-radius: 4px;
+		background: var(--bg-primary);
+		color: var(--text-primary);
 		font-family: inherit;
-		font-size: 14px;
+		font-size: 13px;
+		line-height: 1.4;
 		resize: none;
+		box-sizing: border-box;
 	}
 
 	.prompt-input:focus {
 		outline: none;
-		border-color: #1976d2;
-		box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.1);
+		border-color: var(--input-focus);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--input-focus) 20%, transparent);
 	}
 
-	.button-group {
+	.prompt-input:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.prompt-input::placeholder {
+		color: var(--text-secondary);
+		opacity: 0.7;
+	}
+
+	.button-row {
 		display: flex;
-		gap: 8px;
+		gap: 6px;
 		flex-wrap: wrap;
 	}
 
-	.btn-primary,
-	.btn-secondary {
-		padding: 8px 12px;
-		border: none;
+	.btn {
+		padding: 6px 12px;
+		border: 2px solid transparent;
 		border-radius: 4px;
 		font-size: 13px;
 		font-weight: 600;
 		cursor: pointer;
-		transition: all 0.2s;
-	}
-
-	.btn-primary {
-		background: #1976d2;
-		color: white;
+		transition: all 0.12s ease;
 		flex: 1;
-		min-width: 100px;
+		min-width: 80px;
+		text-align: center;
 	}
 
-	.btn-primary:hover:not(:disabled) {
-		background: #1565c0;
-	}
-
-	.btn-primary:disabled {
-		background: #ccc;
+	.btn:disabled {
+		opacity: 0.5;
 		cursor: not-allowed;
 	}
 
-	.btn-secondary {
-		background: #e0e0e0;
-		color: #333;
-		flex: 1;
-		min-width: 100px;
+	.btn-primary {
+		background: var(--button-primary);
+		color: var(--button-text);
+		border-color: var(--button-primary);
 	}
 
-	.btn-secondary:hover {
-		background: #d0d0d0;
+	.btn-primary:hover:not(:disabled) {
+		background: var(--button-primary-hover);
+		border-color: var(--button-primary-hover);
+	}
+
+	.btn-primary:active:not(:disabled) {
+		background: var(--button-primary-active);
+		border-color: var(--button-primary-active);
+	}
+
+	.btn-outline {
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		border-color: var(--border-primary);
+	}
+
+	.btn-outline:hover:not(:disabled) {
+		background: var(--bg-secondary);
+		opacity: 0.8;
 	}
 </style>

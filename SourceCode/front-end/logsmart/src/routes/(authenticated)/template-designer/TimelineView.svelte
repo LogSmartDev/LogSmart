@@ -1,5 +1,3 @@
-<!-- src/routes/(authenticated)/template-designer/TimelineView.svelte -->
-
 <script lang="ts">
 	import type { GenerationNode } from './AiGeneratorPopup.types';
 
@@ -34,65 +32,65 @@
 	const nodes = $derived(renderNode(tree));
 </script>
 
-<div class="timeline-container">
+<div class="timeline">
 	{#each nodes as node (node.id)}
-		<div class="timeline-node" style="margin-left: {node.depth * 12}px;">
+		<div class="tl-node" style="margin-left: {node.depth * 10}px;">
+			{#if node.hasChildren}
+				<div class="tl-connector"></div>
+			{/if}
 			<button
-				class="node-dot"
-				class:current={node.isCurrentPath}
+				class="tl-dot"
+				class:tl-dot-current={node.isCurrentPath}
 				onclick={() => onSelectNode?.(node.id)}
 				title="Generation {node.depth}"
 			></button>
-			{#if node.hasChildren}
-				<div class="node-connector"></div>
-			{/if}
 		</div>
 	{/each}
 </div>
 
 <style>
-	.timeline-container {
+	.timeline {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
-		align-items: flex-start;
+		gap: 4px;
+		align-items: center;
 	}
 
-	.timeline-node {
+	.tl-node {
 		position: relative;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: 8px;
 	}
 
-	.node-dot {
-		width: 12px;
-		height: 12px;
+	.tl-dot {
+		width: 10px;
+		height: 10px;
 		border-radius: 50%;
-		background: #ddd;
-		border: 2px solid #999;
+		background: var(--border-secondary);
+		border: 2px solid var(--text-secondary);
 		cursor: pointer;
-		transition: all 0.2s;
+		transition: all 0.15s ease;
 		padding: 0;
+		position: relative;
+		z-index: 1;
 	}
 
-	.node-dot:hover {
-		background: #bbb;
-		transform: scale(1.2);
+	.tl-dot:hover {
+		transform: scale(1.3);
+		border-color: var(--button-primary);
 	}
 
-	.node-dot.current {
-		background: #1976d2;
-		border-color: #1565c0;
-		box-shadow: 0 0 4px rgba(25, 118, 210, 0.5);
+	.tl-dot-current {
+		background: var(--button-primary);
+		border-color: var(--button-primary);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--button-primary) 30%, transparent);
 	}
 
-	.node-connector {
+	.tl-connector {
 		width: 2px;
-		height: 16px;
-		background: #ddd;
-		position: absolute;
-		left: 5px;
-		top: 12px;
+		height: 14px;
+		background: var(--border-secondary);
+		margin-bottom: 2px;
 	}
 </style>
