@@ -692,31 +692,13 @@
 					props: item.props
 				}));
 
-			const newNode = createGenerationNode(
-				prompt,
-				nodeCanvasItems,
-				previousNodeItems,
-				generatorState.currentNodeId
-			);
-
-			// Replace the pending node with the actual response
+			// Update the pending node in-place with the actual response
 			if (generatorState.tree && generatorState.currentNodeId === pendingNode.id) {
-				const parentId = newNode.parentId;
-				if (parentId && generatorState.tree.id !== parentId) {
-					// Update tree to replace pending node with actual node
-					generatorState.tree = updateNodeInTree(
-						generatorState.tree,
-						parentId,
-						pendingNode.id,
-						newNode
-					);
-				} else if (generatorState.tree.id === parentId) {
-					// Root's child
-					generatorState.tree.children = generatorState.tree.children.map((child) =>
-						child.id === pendingNode.id ? newNode : child
-					);
-				}
-				generatorState.currentNodeId = newNode.id;
+				generatorState.tree = updateNodeResponse(
+					generatorState.tree,
+					pendingNode.id,
+					nodeCanvasItems
+				);
 			}
 
 			// Update canvas with combined items (previous + new)
@@ -742,22 +724,18 @@
 		}
 	}
 
-	function updateNodeInTree(
+	function updateNodeResponse(
 		tree: import('./AiGeneratorPopup.types').GenerationNode,
-		parentId: string,
-		oldNodeId: string,
-		newNode: import('./AiGeneratorPopup.types').GenerationNode
+		nodeId: string,
+		response: import('./AiGeneratorPopup.types').CanvasItem[]
 	): import('./AiGeneratorPopup.types').GenerationNode {
-		if (tree.id === parentId) {
-			return {
-				...tree,
-				children: tree.children.map((child) => (child.id === oldNodeId ? newNode : child))
-			};
+		if (tree.id === nodeId) {
+			return { ...tree, response };
 		}
 		return {
 			...tree,
 			children: tree.children.map((child) =>
-				updateNodeInTree(child, parentId, oldNodeId, newNode)
+				updateNodeResponse(child, nodeId, response)
 			)
 		};
 	}
@@ -765,12 +743,14 @@
 	function removeNodeFromTree(
 		tree: import('./AiGeneratorPopup.types').GenerationNode,
 		nodeId: string
-	): import('./AiGeneratorPopup.types').GenerationNode {
+	): import('./AiGeneratorPopup.types').GenerationNode | null {
+		if (tree.id === nodeId) return null;
 		return {
 			...tree,
 			children: tree.children
 				.filter((child) => child.id !== nodeId)
 				.map((child) => removeNodeFromTree(child, nodeId))
+				.filter((child): child is import('./AiGeneratorPopup.types').GenerationNode => child !== null)
 		};
 	}
 
