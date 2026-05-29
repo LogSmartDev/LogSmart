@@ -7,7 +7,7 @@
 	import TimelineView from './TimelineView.svelte';
 
   interface Props {
-    state: GeneratorState;
+    generatorState: GeneratorState;
     onGenerate?: (prompt: string) => void;
     onBranch?: (nodeId: string) => void;
     onRevert?: (nodeId: string) => void;
@@ -18,7 +18,7 @@
   }
 
   let {
-    state = $bindable(),
+    generatorState = $bindable(),
     onGenerate,
     onBranch,
     onRevert,

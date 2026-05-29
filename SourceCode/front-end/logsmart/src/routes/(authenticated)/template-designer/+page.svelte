@@ -1098,7 +1098,7 @@
 
 			{#if generatorState.isOpen}
 				<AiGeneratorPopup
-					bind:state={generatorState}
+					bind:generatorState
 					onGenerate={handleAiGenerate}
 					onBranch={handleAiBranch}
 					onRevert={handleAiRevert}
