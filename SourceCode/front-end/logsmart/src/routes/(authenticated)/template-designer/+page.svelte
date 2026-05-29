@@ -67,6 +67,7 @@
 	let hasUndoAvailable = $derived(canvasItemsBackup !== null);
 
 	let generatorState = $state<GeneratorState>(loadGeneratorState());
+	let aiGenerating = $state(false);
 
 	// Persist state changes whenever generatorState changes
 	$effect(() => {
@@ -604,7 +605,8 @@
 			return;
 		}
 
-		// Build context from current canvas state
+		aiGenerating = true;
+
 		let canvasWidth = 800;
 		let canvasHeight = designCanvasHeight;
 
@@ -619,6 +621,37 @@
 
 		// Store previous state for error recovery
 		const previousItems = [...canvasItems];
+
+		// Optimistic UI: Create a pending node immediately so user sees their message
+		const previousNodeItems: import('./AiGeneratorPopup.types').CanvasItem[] = previousItems.map(
+			(item) => ({
+				id: item.id,
+				type: item.type,
+				position: { x: item.x, y: item.y },
+				props: item.props
+			})
+		);
+
+		const pendingNode = createGenerationNode(
+			prompt,
+			[],
+			previousNodeItems,
+			generatorState.currentNodeId
+		);
+
+		// Add pending node to tree and show it immediately
+		if (!generatorState.tree) {
+			generatorState.tree = pendingNode;
+			generatorState.currentNodeId = pendingNode.id;
+		} else {
+			generatorState.tree = addGenerationToTree(
+				generatorState.tree,
+				generatorState.currentNodeId || generatorState.tree.id,
+				pendingNode
+			);
+			generatorState.currentNodeId = pendingNode.id;
+		}
+		saveGeneratorState(generatorState);
 
 		try {
 			const { data, error } = await api.POST('/llm/generate-layout', {
@@ -646,6 +679,10 @@
 				mapApiFieldToCanvasItem(field, index)
 			);
 
+			// Combine previous items with newly generated items
+			// This preserves old content while adding new components
+			const combinedItems = [...previousItems, ...generatedComponents];
+
 			// Create generation node - convert to AiGeneratorPopup.types.CanvasItem format
 			const nodeCanvasItems: import('./AiGeneratorPopup.types').CanvasItem[] =
 				generatedComponents.map((item) => ({
@@ -655,15 +692,6 @@
 					props: item.props
 				}));
 
-			const previousNodeItems: import('./AiGeneratorPopup.types').CanvasItem[] = previousItems.map(
-				(item) => ({
-					id: item.id,
-					type: item.type,
-					position: { x: item.x, y: item.y },
-					props: item.props
-				})
-			);
-
 			const newNode = createGenerationNode(
 				prompt,
 				nodeCanvasItems,
@@ -671,21 +699,28 @@
 				generatorState.currentNodeId
 			);
 
-			// Add to tree
-			if (!generatorState.tree) {
-				generatorState.tree = newNode;
-				generatorState.currentNodeId = newNode.id;
-			} else {
-				generatorState.tree = addGenerationToTree(
-					generatorState.tree,
-					generatorState.currentNodeId || generatorState.tree.id,
-					newNode
-				);
+			// Replace the pending node with the actual response
+			if (generatorState.tree && generatorState.currentNodeId === pendingNode.id) {
+				const parentId = newNode.parentId;
+				if (parentId && generatorState.tree.id !== parentId) {
+					// Update tree to replace pending node with actual node
+					generatorState.tree = updateNodeInTree(
+						generatorState.tree,
+						parentId,
+						pendingNode.id,
+						newNode
+					);
+				} else if (generatorState.tree.id === parentId) {
+					// Root's child
+					generatorState.tree.children = generatorState.tree.children.map((child) =>
+						child.id === pendingNode.id ? newNode : child
+					);
+				}
 				generatorState.currentNodeId = newNode.id;
 			}
 
-			// Update canvas with generated items
-			canvasItems = generatedComponents;
+			// Update canvas with combined items (previous + new)
+			canvasItems = combinedItems;
 			selectedItemId = null;
 			hasUnsavedChanges = true;
 
@@ -694,7 +729,64 @@
 			console.error('Generation failed:', error);
 			// Restore previous state on error
 			canvasItems = previousItems;
+			// Remove pending node on error
+			if (generatorState.tree && generatorState.currentNodeId === pendingNode.id) {
+				generatorState.tree = removeNodeFromTree(generatorState.tree, pendingNode.id);
+				// Find parent and switch to it
+				const parent = findNodeParent(generatorState.tree, pendingNode.parentId);
+				generatorState.currentNodeId = parent?.id || generatorState.tree?.id || null;
+			}
+			saveGeneratorState(generatorState);
+		} finally {
+			aiGenerating = false;
 		}
+	}
+
+	function updateNodeInTree(
+		tree: import('./AiGeneratorPopup.types').GenerationNode,
+		parentId: string,
+		oldNodeId: string,
+		newNode: import('./AiGeneratorPopup.types').GenerationNode
+	): import('./AiGeneratorPopup.types').GenerationNode {
+		if (tree.id === parentId) {
+			return {
+				...tree,
+				children: tree.children.map((child) => (child.id === oldNodeId ? newNode : child))
+			};
+		}
+		return {
+			...tree,
+			children: tree.children.map((child) =>
+				updateNodeInTree(child, parentId, oldNodeId, newNode)
+			)
+		};
+	}
+
+	function removeNodeFromTree(
+		tree: import('./AiGeneratorPopup.types').GenerationNode,
+		nodeId: string
+	): import('./AiGeneratorPopup.types').GenerationNode {
+		return {
+			...tree,
+			children: tree.children
+				.filter((child) => child.id !== nodeId)
+				.map((child) => removeNodeFromTree(child, nodeId))
+		};
+	}
+
+	function findNodeParent(
+		tree: import('./AiGeneratorPopup.types').GenerationNode | null,
+		nodeId: string | null
+	): import('./AiGeneratorPopup.types').GenerationNode | null {
+		if (!tree || !nodeId) return null;
+		if (tree.id === nodeId) return null;
+
+		for (const child of tree.children) {
+			if (child.id === nodeId) return tree;
+			const found = findNodeParent(child, nodeId);
+			if (found) return found;
+		}
+		return null;
 	}
 
 	function undoGeneration() {
@@ -1006,7 +1098,7 @@
 
 			{#if generatorState.isOpen}
 				<AiGeneratorPopup
-					bind:generatorState
+					bind:state={generatorState}
 					onGenerate={handleAiGenerate}
 					onBranch={handleAiBranch}
 					onRevert={handleAiRevert}
@@ -1021,6 +1113,7 @@
 						generatorState.position = pos;
 						saveGeneratorState(generatorState);
 					}}
+					isLoading={aiGenerating}
 					on:selectNode={(e) => {
 						const nodeId = (e as any).detail;
 						switchAiGeneration(nodeId);
