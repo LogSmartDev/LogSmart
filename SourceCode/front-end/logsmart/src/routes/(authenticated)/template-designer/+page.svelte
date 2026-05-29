@@ -734,9 +734,7 @@
 		}
 		return {
 			...tree,
-			children: tree.children.map((child) =>
-				updateNodeResponse(child, nodeId, response)
-			)
+			children: tree.children.map((child) => updateNodeResponse(child, nodeId, response))
 		};
 	}
 
@@ -750,7 +748,9 @@
 			children: tree.children
 				.filter((child) => child.id !== nodeId)
 				.map((child) => removeNodeFromTree(child, nodeId))
-				.filter((child): child is import('./AiGeneratorPopup.types').GenerationNode => child !== null)
+				.filter(
+					(child): child is import('./AiGeneratorPopup.types').GenerationNode => child !== null
+				)
 		};
 	}
 

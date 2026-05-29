@@ -6,27 +6,27 @@
 	import { getChatHistory, findNodeById, isLeafNode } from './aiGeneratorStore';
 	import TimelineView from './TimelineView.svelte';
 
-  interface Props {
-    generatorState: GeneratorState;
-    onGenerate?: (prompt: string) => void;
-    onBranch?: (nodeId: string) => void;
-    onRevert?: (nodeId: string) => void;
-    onMinimize?: () => void;
-    onClose?: () => void;
-    onPositionChange?: (position: { x: number; y: number }) => void;
-    isLoading?: boolean;
-  }
+	interface Props {
+		generatorState: GeneratorState;
+		onGenerate?: (prompt: string) => void;
+		onBranch?: (nodeId: string) => void;
+		onRevert?: (nodeId: string) => void;
+		onMinimize?: () => void;
+		onClose?: () => void;
+		onPositionChange?: (position: { x: number; y: number }) => void;
+		isLoading?: boolean;
+	}
 
-  let {
-    generatorState = $bindable(),
-    onGenerate,
-    onBranch,
-    onRevert,
-    onMinimize,
-    onClose,
-    onPositionChange,
-    isLoading = false
-  }: Props = $props();
+	let {
+		generatorState = $bindable(),
+		onGenerate,
+		onBranch,
+		onRevert,
+		onMinimize,
+		onClose,
+		onPositionChange,
+		isLoading = false
+	}: Props = $props();
 
 	let prompt = $state('');
 	let isDragging = $state(false);
@@ -153,38 +153,46 @@
 					<div class="message ai-message">
 						<div class="message-label">AI Generator</div>
 						<div class="message-content">
-							Generated {node.response.length} component{node.response.length !== 1 ? 's' : ''}
+							{#if node.response.length === 0}
+								⏳ Generating...
+							{:else}
+								Generated {node.response.length} component{node.response.length !== 1 ? 's' : ''}
+							{/if}
 						</div>
 						<div class="message-time">{new Date(node.timestamp).toLocaleTimeString()}</div>
 					</div>
 				{/each}
 			</div>
 
-      <!-- Input -->
-      <div class="input-area" data-no-drag>
-        <textarea
-          class="prompt-input"
-          placeholder="Describe what you want to generate..."
-          bind:value={prompt}
-          onkeydown={(e) => e.key === 'Enter' && e.ctrlKey && handleGenerate()}
-          disabled={isLoading}
-        ></textarea>
-        <div class="button-group">
-          <button class="btn-primary" onclick={handleGenerate} disabled={!prompt.trim() || isLoading}>
-            {isLoading ? '⏳ Generating...' : 'Generate'}
-          </button>
-          {#if canBranch}
-            <button class="btn-secondary" onclick={handleBranch} disabled={isLoading}>
-              Branch from here
-            </button>
-          {/if}
-          {#if isNotCurrent}
-            <button class="btn-secondary" onclick={handleRevert} disabled={isLoading}>
-              Revert to this state
-            </button>
-          {/if}
-        </div>
-      </div>
+			<!-- Input -->
+			<div class="input-area" data-no-drag>
+				<textarea
+					class="prompt-input"
+					placeholder="Describe what you want to generate..."
+					bind:value={prompt}
+					onkeydown={(e) => e.key === 'Enter' && e.ctrlKey && handleGenerate()}
+					disabled={isLoading}
+				></textarea>
+				<div class="button-group">
+					<button
+						class="btn-primary"
+						onclick={handleGenerate}
+						disabled={!prompt.trim() || isLoading}
+					>
+						{isLoading ? '⏳ Generating...' : 'Generate'}
+					</button>
+					{#if canBranch}
+						<button class="btn-secondary" onclick={handleBranch} disabled={isLoading}>
+							Branch from here
+						</button>
+					{/if}
+					{#if isNotCurrent}
+						<button class="btn-secondary" onclick={handleRevert} disabled={isLoading}>
+							Revert to this state
+						</button>
+					{/if}
+				</div>
+			</div>
 		</div>
 	</div>
 </div>

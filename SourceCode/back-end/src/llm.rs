@@ -28,8 +28,8 @@ Return a JSON object for a form layout in this exact shape:
 }
 
 You will receive the user's request plus context that includes:
-- canvas dimensions
-- typical component sizes per field type
+- Canvas dimensions
+- Current components already on the canvas (their types, positions, and props)
 
 Rules you must follow:
 1) Use ONLY supported field types:
@@ -39,12 +39,15 @@ Rules you must follow:
    - dropdown
    - label
 
-2) Positioning:
+2) Positioning with existing components:
    - Use absolute coordinates in pixels via position.x and position.y.
+   - The user prompt will include a "Current canvas context" section listing existing components with their positions.
+   - You MUST NOT overlap with any existing component. Leave at least 16px gap between your new components and existing ones.
+   - When adding new components to a canvas that already has items, place new components BELOW the lowest existing component (add padding of at least 24px).
    - Keep components fully inside canvas bounds.
-   - Avoid overlap.
    - Default to a clean top-to-bottom layout unless the user explicitly asks for columns/grid.
-   - Prefer consistent spacing (about 16-24px).
+   - Prefer consistent spacing (about 16-24px) between new components.
+   - NEVER reposition or modify existing components — only add new ones.
 
 3) Field-specific props:
    - text_input: use props like text, placeholder, required, min_length, max_length, input_type.
