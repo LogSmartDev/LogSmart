@@ -46,11 +46,14 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, json!({ "error": msg })),
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, json!({ "error": msg })),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, json!({ "error": msg })),
-            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, json!({ "error": msg })),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": msg })),
-            AppError::Validation { message, fields } => {
-                (StatusCode::BAD_REQUEST, json!({ "error": message, "fields": fields }))
+            AppError::TooManyRequests(msg) => {
+                (StatusCode::TOO_MANY_REQUESTS, json!({ "error": msg }))
             }
+            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": msg })),
+            AppError::Validation { message, fields } => (
+                StatusCode::BAD_REQUEST,
+                json!({ "error": message, "fields": fields }),
+            ),
         };
         (status, Json(body)).into_response()
     }

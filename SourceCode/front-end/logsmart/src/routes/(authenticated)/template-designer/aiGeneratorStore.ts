@@ -1,11 +1,7 @@
 // src/routes/(authenticated)/template-designer/aiGeneratorStore.ts
 
 import { v4 as uuidv4 } from 'uuid';
-import type {
-	GenerationNode,
-	GeneratorState,
-	CanvasItem
-} from './AiGeneratorPopup.types';
+import type { GenerationNode, GeneratorState, CanvasItem } from './AiGeneratorPopup.types';
 
 const STORAGE_KEY = 'logsmart_ai_generator_state';
 

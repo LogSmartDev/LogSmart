@@ -36,12 +36,10 @@ pub async fn add_template(
     Json(payload): Json<AddTemplateRequest>,
 ) -> Result<Json<AddTemplateResponse>, crate::error::AppError> {
     // Validate request payload
-    payload
-        .validate()
-        .map_err(|e| {
-            let (msg, fields) = friendly_validation_errors(&e);
-            err_validation(&msg, fields)
-        })?;
+    payload.validate().map_err(|e| {
+        let (msg, fields) = friendly_validation_errors(&e);
+        err_validation(&msg, fields)
+    })?;
 
     // Branch managers can only create templates for their own branch
     if user.is_branch_manager() {
@@ -209,12 +207,10 @@ pub async fn update_template(
     Json(payload): Json<UpdateTemplateRequest>,
 ) -> Result<Json<UpdateTemplateResponse>, crate::error::AppError> {
     // Validate request payload
-    payload
-        .validate()
-        .map_err(|e| {
-            let (msg, fields) = friendly_validation_errors(&e);
-            err_validation(&msg, fields)
-        })?;
+    payload.validate().map_err(|e| {
+        let (msg, fields) = friendly_validation_errors(&e);
+        err_validation(&msg, fields)
+    })?;
 
     services::TemplateService::update_template(
         &state,
