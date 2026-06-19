@@ -101,8 +101,8 @@
 		currentNode ? !isLeafNode(generatorState.tree, generatorState.currentNodeId!) : false
 	);
 	const isNotCurrent = $derived(
-		generatorState.tree && generatorState.currentNodeId
-			? chatHistory[chatHistory.length - 1]?.id !== generatorState.currentNodeId
+		generatorState.tree && generatorState.currentNodeId && generatorState.latestNodeId
+			? generatorState.currentNodeId !== generatorState.latestNodeId
 			: false
 	);
 </script>

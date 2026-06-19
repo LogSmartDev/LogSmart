@@ -16,8 +16,7 @@
 	import type { PageData } from './$types';
 	import type { components } from '$lib/api-types';
 	import AiGeneratorPopup from './AiGeneratorPopup.svelte';
-	import TimelineView from './TimelineView.svelte';
-	import type { GeneratorState, GenerationNode } from './AiGeneratorPopup.types';
+	import type { GeneratorState } from './AiGeneratorPopup.types';
 	import {
 		createEmptyGeneratorState,
 		loadGeneratorState,
@@ -25,8 +24,7 @@
 		clearGeneratorState,
 		createGenerationNode,
 		addGenerationToTree,
-		findNodeById,
-		getChatHistory
+		findNodeById
 	} from './aiGeneratorStore';
 	let { data } = $props<{ data: PageData }>();
 	let templates = $state<Template[]>([]);
@@ -60,11 +58,7 @@
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
 	let hasUnsavedChanges = $state(false);
-	let aiPrompt = $state('');
-	let aiLoading = $state(false);
-	let aiError = $state<string | null>(null);
 	let canvasItemsBackup = $state<CanvasItem[] | null>(null);
-	let hasUndoAvailable = $derived(canvasItemsBackup !== null);
 
 	let generatorState = $state<GeneratorState>(loadGeneratorState());
 	let aiGenerating = $state(false);
@@ -651,6 +645,7 @@
 			);
 			generatorState.currentNodeId = pendingNode.id;
 		}
+		generatorState.latestNodeId = pendingNode.id;
 		saveGeneratorState(generatorState);
 
 		try {
@@ -714,9 +709,9 @@
 			// Remove pending node on error
 			if (generatorState.tree && generatorState.currentNodeId === pendingNode.id) {
 				generatorState.tree = removeNodeFromTree(generatorState.tree, pendingNode.id);
-				// Find parent and switch to it
-				const parent = findNodeParent(generatorState.tree, pendingNode.parentId);
-				generatorState.currentNodeId = parent?.id || generatorState.tree?.id || null;
+				// Switch to parent node
+				generatorState.currentNodeId = pendingNode.parentId;
+				generatorState.latestNodeId = generatorState.currentNodeId;
 			}
 			saveGeneratorState(generatorState);
 		} finally {
@@ -754,29 +749,6 @@
 		};
 	}
 
-	function findNodeParent(
-		tree: import('./AiGeneratorPopup.types').GenerationNode | null,
-		nodeId: string | null
-	): import('./AiGeneratorPopup.types').GenerationNode | null {
-		if (!tree || !nodeId) return null;
-		if (tree.id === nodeId) return null;
-
-		for (const child of tree.children) {
-			if (child.id === nodeId) return tree;
-			const found = findNodeParent(child, nodeId);
-			if (found) return found;
-		}
-		return null;
-	}
-
-	function undoGeneration() {
-		if (canvasItemsBackup !== null) {
-			canvasItems = canvasItemsBackup;
-			canvasItemsBackup = null;
-			selectedItemId = null;
-		}
-	}
-
 	function handleAiBranch(parentNodeId: string): void {
 		// Branching just switches to that node; next generation creates sibling
 		switchAiGeneration(parentNodeId);
@@ -795,6 +767,7 @@
 				props: item.props || {}
 			}));
 			generatorState.currentNodeId = nodeId;
+			generatorState.latestNodeId = nodeId;
 			saveGeneratorState(generatorState);
 		}
 	}
@@ -1042,7 +1015,7 @@
 			<div
 				style="height: {leftPaletteHeight !== null
 					? `${leftPaletteHeight}px`
-					: '60%'}; flex-shrink: 0; overflow: auto;"
+					: '85%'}; flex-shrink: 0; overflow: auto;"
 			>
 				<TemplatesSidebar
 					{templates}

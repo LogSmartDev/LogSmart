@@ -4,8 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type {
 	GenerationNode,
 	GeneratorState,
-	CanvasItem,
-	BreadcrumbNode
+	CanvasItem
 } from './AiGeneratorPopup.types';
 
 const STORAGE_KEY = 'logsmart_ai_generator_state';
@@ -17,6 +16,7 @@ export function createEmptyGeneratorState(): GeneratorState {
 	return {
 		tree: null,
 		currentNodeId: null,
+		latestNodeId: null,
 		isOpen: false,
 		position: { x: 100, y: 100 },
 		isMinimized: false

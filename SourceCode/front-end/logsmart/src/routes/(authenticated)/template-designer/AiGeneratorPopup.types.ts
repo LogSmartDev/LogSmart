@@ -21,6 +21,7 @@ export interface GenerationNode {
 export interface GeneratorState {
 	tree: GenerationNode | null;
 	currentNodeId: string | null;
+	latestNodeId: string | null;
 	isOpen: boolean;
 	position: { x: number; y: number };
 	isMinimized: boolean;
