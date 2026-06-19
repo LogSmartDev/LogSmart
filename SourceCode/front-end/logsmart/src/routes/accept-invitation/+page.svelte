@@ -17,6 +17,7 @@
 	let step = $state(1);
 	let token = $state('');
 	let error = $state('');
+	let fieldErrors = $state<Record<string, string[]>>({});
 	let loading = $state(true);
 
 	let firstName = $state('');
@@ -86,6 +87,7 @@
 	async function submit(e: Event) {
 		e.preventDefault();
 		error = '';
+		fieldErrors = {};
 		touched = {
 			firstName: true,
 			lastName: true,
@@ -108,6 +110,9 @@
 
 			if (apiError) {
 				error = apiError.error || 'Failed to accept invitation.';
+				if (apiError.fields) {
+					fieldErrors = apiError.fields;
+				}
 				loading = false;
 			} else {
 				await invalidateAll();
@@ -177,12 +182,17 @@
 								type="text"
 								bind:value={firstName}
 								onblur={() => (touched.firstName = true)}
-								aria-invalid={!firstNameValid}
+								aria-invalid={!firstNameValid || !!fieldErrors.first_name?.length}
 								placeholder="John"
 								required
 							/>
 							{#if touched.firstName && !firstNameValid}
 								<div class="field-error">First name is required.</div>
+							{/if}
+							{#if fieldErrors.first_name}
+								{#each fieldErrors.first_name as msg}
+									<div class="field-error">{msg}</div>
+								{/each}
 							{/if}
 						</label>
 
@@ -192,12 +202,17 @@
 								type="text"
 								bind:value={lastName}
 								onblur={() => (touched.lastName = true)}
-								aria-invalid={!lastNameValid}
+								aria-invalid={!lastNameValid || !!fieldErrors.last_name?.length}
 								placeholder="Doe"
 								required
 							/>
 							{#if touched.lastName && !lastNameValid}
 								<div class="field-error">Last name is required.</div>
+							{/if}
+							{#if fieldErrors.last_name}
+								{#each fieldErrors.last_name as msg}
+									<div class="field-error">{msg}</div>
+								{/each}
 							{/if}
 						</label>
 					</div>
@@ -210,7 +225,7 @@
 								type={showPassword ? 'text' : 'password'}
 								bind:value={password}
 								onblur={() => (touched.password = true)}
-								aria-invalid={!passwordValid}
+								aria-invalid={!passwordValid || !!fieldErrors.password?.length}
 								placeholder="Min 8 chars, uppercase, lowercase, digit, special char"
 								class="password-input"
 								required
@@ -277,6 +292,11 @@
 						{/if}
 						{#if touched.password && !passwordValid}
 							<div class="field-error">Password must meet all requirements.</div>
+						{/if}
+						{#if fieldErrors.password}
+							{#each fieldErrors.password as msg}
+								<div class="field-error">{msg}</div>
+							{/each}
 						{/if}
 					</label>
 

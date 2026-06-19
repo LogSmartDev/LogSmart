@@ -9,7 +9,7 @@ use crate::{
     },
     email,
     middleware::{AuditRequestContext, ManageCompanyUser, ReadCompanyUser},
-    utils::AuditLogger,
+    utils::{err_validation, friendly_validation_errors, AuditLogger},
 };
 use axum::{Json, extract::State, http::StatusCode};
 use validator::Validate;
@@ -37,7 +37,10 @@ pub async fn create_branch(
     // Validate request payload
     payload
         .validate()
-        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+        .map_err(|e| {
+            let (msg, fields) = friendly_validation_errors(&e);
+            err_validation(&msg, fields)
+        })?;
 
     let company_id = user
         .company_id
@@ -136,7 +139,10 @@ pub async fn update_branch(
     // Validate request payload
     payload
         .validate()
-        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+        .map_err(|e| {
+            let (msg, fields) = friendly_validation_errors(&e);
+            err_validation(&msg, fields)
+        })?;
 
     let company_id = user
         .company_id

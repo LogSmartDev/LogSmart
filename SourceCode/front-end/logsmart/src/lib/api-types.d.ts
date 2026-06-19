@@ -1163,6 +1163,9 @@ export interface components {
 		};
 		ErrorResponse: {
 			error: string;
+			fields?: {
+				[key: string]: string[];
+			} | null;
 		};
 		/** @enum {string} */
 		Frequency: 'Daily' | 'Weekly' | 'Monthly' | 'Quarterly' | 'Yearly';

@@ -8,6 +8,7 @@ use crate::{
     },
     middleware::{AnyAuthUser, BranchManagerUser, ReadBranchUser},
     services,
+    utils::{err_validation, friendly_validation_errors},
 };
 use axum::{
     Json,
@@ -37,7 +38,10 @@ pub async fn add_template(
     // Validate request payload
     payload
         .validate()
-        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+        .map_err(|e| {
+            let (msg, fields) = friendly_validation_errors(&e);
+            err_validation(&msg, fields)
+        })?;
 
     // Branch managers can only create templates for their own branch
     if user.is_branch_manager() {
@@ -207,7 +211,10 @@ pub async fn update_template(
     // Validate request payload
     payload
         .validate()
-        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+        .map_err(|e| {
+            let (msg, fields) = friendly_validation_errors(&e);
+            err_validation(&msg, fields)
+        })?;
 
     services::TemplateService::update_template(
         &state,

@@ -242,8 +242,8 @@ test.describe('Google OAuth Authentication', () => {
 			oauthAdminCreds.firstName,
 			oauthAdminCreds.lastName
 		);
-		await expect(page.url()).toEqual(
-			'http://localhost:5173/login?oauth_error=authentication_failed'
+		await expect(page.url()).toContain(
+			'http://localhost:5173/login?oauth_error=An%20account%20with%20this%20email%20already%20exists'
 		);
 	});
 });

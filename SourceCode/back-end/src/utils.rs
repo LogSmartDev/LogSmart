@@ -439,6 +439,107 @@ pub fn err_created<T: serde::Serialize>(
     )
 }
 
+pub fn err_validation(
+    message: &str,
+    fields: std::collections::HashMap<String, Vec<String>>,
+) -> crate::error::AppError {
+    crate::error::AppError::Validation {
+        message: message.to_string(),
+        fields,
+    }
+}
+
+/// Converts `validator::ValidationErrors` into user-friendly per-field messages.
+pub fn friendly_validation_errors(
+    errors: &validator::ValidationErrors,
+) -> (String, std::collections::HashMap<String, Vec<String>>) {
+    use std::collections::HashMap;
+
+    let mut fields: HashMap<String, Vec<String>> = HashMap::new();
+    let mut all_errors: Vec<String> = Vec::new();
+
+    for (field, kind) in errors.errors() {
+        let field_label = field_to_label(field.as_ref());
+        let mut messages: Vec<String> = Vec::new();
+
+        if let validator::ValidationErrorsKind::Field(field_errors) = kind {
+            for err in field_errors {
+                let msg = match err.code.as_ref() {
+                    "email" => format!("{field_label} has an invalid format"),
+                    "length" => {
+                        let min = err.params.get("min").and_then(|v| v.as_u64());
+                        let max = err.params.get("max").and_then(|v| v.as_u64());
+                        match (min, max) {
+                            (Some(min), Some(max)) => {
+                                format!("{field_label} must be between {min} and {max} characters")
+                            }
+                            (Some(min), None) => {
+                                format!("{field_label} must be at least {min} characters")
+                            }
+                            (None, Some(max)) => {
+                                format!("{field_label} must not exceed {max} characters")
+                            }
+                            (None, None) => format!("{field_label} has an invalid length"),
+                        }
+                    }
+                    "password_too_short" => "Password must be at least 8 characters".to_string(),
+                    "password_too_long" => "Password must not exceed 128 characters".to_string(),
+                    "password_no_uppercase" => {
+                        "Password must contain at least one uppercase letter".to_string()
+                    }
+                    "password_no_lowercase" => {
+                        "Password must contain at least one lowercase letter".to_string()
+                    }
+                    "password_no_digit" => "Password must contain at least one digit".to_string(),
+                    "password_no_special" => {
+                        "Password must contain at least one special character".to_string()
+                    }
+                    "invalid_uuid_length" => format!("{field_label} must be 36 characters"),
+                    "invalid_uuid_format" => {
+                        format!("{field_label} has an invalid UUID format (expected hyphens)")
+                    }
+                    "invalid_uuid_characters" => {
+                        format!("{field_label} contains invalid characters")
+                    }
+                    other => format!("{field_label}: {other}"),
+                };
+                messages.push(msg.clone());
+                all_errors.push(msg);
+            }
+        }
+
+        fields.insert(field.to_string(), messages);
+    }
+
+    let summary = if let [single] = all_errors.as_slice() {
+        single.clone()
+    } else {
+        "Please correct the errors below".to_string()
+    };
+
+    (summary, fields)
+}
+
+fn field_to_label(field: &str) -> String {
+    match field {
+        "email" => "Email",
+        "password" => "Password",
+        "new_password" => "New password",
+        "first_name" => "First name",
+        "last_name" => "Last name",
+        "company_name" => "Company name",
+        "company_address" => "Company address",
+        "name" => "Name",
+        "address" => "Address",
+        "branch_id" => "Branch",
+        "template_name" => "Template name",
+        "version_name" => "Version name",
+        "token" => "Token",
+        _ => field,
+    }
+    .to_string()
+}
+
 /// Validates that a string is a valid CSS color value.
 /// Rejects values containing CSS syntax characters that could be used for injection.
 ///

@@ -1,8 +1,8 @@
 use crate::middleware::{AnyAuthUser, AuditRequestContext};
 use crate::services::UserService;
 use crate::utils::{
-    err_bad_request, err_internal, err_not_found, err_unauthorized,
-    extract_ip_from_headers_and_addr, extract_user_agent,
+    err_bad_request, err_internal, err_not_found, err_unauthorized, err_validation,
+    extract_ip_from_headers_and_addr, extract_user_agent, friendly_validation_errors,
 };
 use crate::{
     AppState,
@@ -145,7 +145,10 @@ pub async fn register_company_admin(
     // Validate request payload
     payload
         .validate()
-        .map_err(|e| err_bad_request(&format!("Validation failed: {e}")))?;
+        .map_err(|e| {
+            let (msg, fields) = friendly_validation_errors(&e);
+            err_validation(&msg, fields)
+        })?;
 
     if let Err(e) = validate_password_policy(&payload.password) {
         return Err(crate::error::AppError::BadRequest(e.to_string()));
@@ -247,7 +250,10 @@ pub async fn login(
     // Validate request payload
     payload
         .validate()
-        .map_err(|e| err_bad_request(&format!("Validation failed: {e}")))?;
+        .map_err(|e| {
+            let (msg, fields) = friendly_validation_errors(&e);
+            err_validation(&msg, fields)
+        })?;
 
     let (token, user): (String, db::UserRecord) = services::AuthService::verify_credentials(
         &state.postgres,

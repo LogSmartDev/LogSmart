@@ -63,12 +63,12 @@
 		return '';
 	}
 
-	let dateFrom = $state(
+	let dateFrom = $derived(
 		isoToDisplay(page.url.searchParams.get('from')) ||
 			isoToDisplay(data?.defaultFrom) ||
 			currentDateFormatted
 	);
-	let dateTo = $state(
+	let dateTo = $derived(
 		isoToDisplay(page.url.searchParams.get('to')) ||
 			isoToDisplay(data?.defaultTo) ||
 			tomorrowDateFormatted

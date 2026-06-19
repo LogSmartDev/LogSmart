@@ -2875,7 +2875,14 @@
 			"ErrorResponse": {
 				"type": "object",
 				"required": ["error"],
-				"properties": { "error": { "type": "string" } }
+				"properties": {
+					"error": { "type": "string" },
+					"fields": {
+						"type": ["object", "null"],
+						"additionalProperties": { "type": "array", "items": { "type": "string" } },
+						"propertyNames": { "type": "string" }
+					}
+				}
 			},
 			"Frequency": {
 				"type": "string",

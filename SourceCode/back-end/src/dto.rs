@@ -533,6 +533,8 @@ pub struct InvitationResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<std::collections::HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

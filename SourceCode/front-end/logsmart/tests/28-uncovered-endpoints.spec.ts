@@ -587,10 +587,7 @@ test.describe('Update Branch', () => {
 			})
 		});
 
-		expect(await updateResponse.json()).toStrictEqual({
-			error:
-				'Validation failed: name: Validation error: length [{"min": Number(1), "max": Number(255), "value": String("")}]'
-		});
+		expect(await updateResponse.text()).toContain("{\"error\":\"Name must be between 1 and 255 characters\",\"fields\":{\"name\":[\"Name must be between 1 and 255 characters\"]}}");
 		expect([400, 422]).toContain(updateResponse.status);
 	});
 });
