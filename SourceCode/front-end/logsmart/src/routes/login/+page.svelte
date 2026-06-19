@@ -7,6 +7,7 @@
 	let password = $state('');
 	let loading = $state(false);
 	let error = $state('');
+	let fieldErrors = $state<Record<string, string[]>>({});
 	let touched = $state({ email: false, password: false });
 	const emailValid = $derived(/^\S+@\S+\.\S+$/.test(email));
 	const passwordValid = $derived(password.length >= 6);
@@ -15,6 +16,7 @@
 	async function submit(e: Event) {
 		e.preventDefault();
 		error = '';
+		fieldErrors = {};
 		touched = { email: true, password: true };
 		if (!formValid) return;
 		loading = true;
@@ -25,6 +27,9 @@
 
 			if (apiError) {
 				error = apiError.error || 'Login failed';
+				if (apiError.fields) {
+					fieldErrors = apiError.fields;
+				}
 			} else {
 				await invalidateAll();
 				// Redirect based on user role
@@ -130,13 +135,18 @@
 				class="text-text-primary"
 				bind:value={email}
 				onblur={() => (touched.email = true)}
-				aria-invalid={!emailValid}
+				aria-invalid={!emailValid || !!fieldErrors.email?.length}
 				aria-describedby="email-help"
 				autocomplete="username webauthn"
 				required
 			/>
 			{#if touched.email && !emailValid}
 				<div id="email-help" class="field-error">Enter a valid email address.</div>
+			{/if}
+			{#if fieldErrors.email}
+				{#each fieldErrors.email as msg (msg)}
+					<div class="field-error">{msg}</div>
+				{/each}
 			{/if}
 		</label>
 
@@ -147,12 +157,17 @@
 				class="text-text-primary"
 				bind:value={password}
 				onblur={() => (touched.password = true)}
-				aria-invalid={!passwordValid}
+				aria-invalid={!passwordValid || !!fieldErrors.password?.length}
 				aria-describedby="password-help"
 				required
 			/>
 			{#if touched.password && !passwordValid}
 				<div id="password-help" class="field-error">Password must be at least 6 characters.</div>
+			{/if}
+			{#if fieldErrors.password}
+				{#each fieldErrors.password as msg (msg)}
+					<div class="field-error">{msg}</div>
+				{/each}
 			{/if}
 		</label>
 

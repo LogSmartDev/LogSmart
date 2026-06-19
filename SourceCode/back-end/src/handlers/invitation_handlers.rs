@@ -2,7 +2,10 @@ use crate::dto::GetPendingInvitationsResponse;
 use crate::middleware::{
     AuditRequestContext, BranchManagerUser, ManageCompanyUser, ReadBranchUser,
 };
-use crate::utils::{extract_ip_from_headers_and_addr, extract_user_agent};
+use crate::utils::{
+    err_validation, extract_ip_from_headers_and_addr, extract_user_agent,
+    friendly_validation_errors,
+};
 use crate::{
     AppState,
     auth::hash_password,
@@ -61,7 +64,10 @@ pub async fn invite_user(
     // Validate request payload
     payload
         .validate()
-        .map_err(|e| crate::error::AppError::BadRequest(format!("Validation failed: {e}")))?;
+        .map_err(|e| {
+            let (msg, fields) = friendly_validation_errors(&e);
+            err_validation(&msg, fields)
+        })?;
 
     // Branch managers can only invite staff to their own branch
     if user.is_branch_manager() {

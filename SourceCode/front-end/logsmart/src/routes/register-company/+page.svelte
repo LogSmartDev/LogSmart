@@ -27,6 +27,7 @@
 	let confirmPassword = $state('');
 	let loading = $state(false);
 	let error = $state('');
+	let fieldErrors = $state<Record<string, string[]>>({});
 	let passwordErrors = $state<string[]>([]);
 	let showPassword = $state(false);
 	let showConfirmPassword = $state(false);
@@ -137,6 +138,7 @@
 	async function submit(e: Event) {
 		e.preventDefault();
 		error = '';
+		fieldErrors = {};
 		touched = {
 			companyName: true,
 			companyAddress: true,
@@ -164,6 +166,9 @@
 
 			if (apiError) {
 				error = apiError.error || 'Registration failed';
+				if (apiError.fields) {
+					fieldErrors = apiError.fields;
+				}
 			} else {
 				await invalidateAll();
 				await goto('/dashboard');
@@ -338,7 +343,7 @@
 							type="text"
 							bind:value={firstName}
 							onblur={() => (touched.firstName = true)}
-							aria-invalid={!firstNameValid}
+							aria-invalid={!firstNameValid || !!fieldErrors.first_name?.length}
 							placeholder="John"
 							class="w-full rounded-md border border-border-secondary bg-bg-primary px-3 py-2 text-base text-text-primary outline-none focus:border-input-focus focus:ring-2 focus:ring-input-focus/20"
 							required
@@ -356,7 +361,7 @@
 							type="text"
 							bind:value={lastName}
 							onblur={() => (touched.lastName = true)}
-							aria-invalid={!lastNameValid}
+							aria-invalid={!lastNameValid || !!fieldErrors.last_name?.length}
 							placeholder="Doe"
 							class="w-full rounded-md border border-border-secondary bg-bg-primary px-3 py-2 text-base text-text-primary outline-none focus:border-input-focus focus:ring-2 focus:ring-input-focus/20"
 							required
@@ -375,7 +380,7 @@
 						type="email"
 						bind:value={email}
 						onblur={() => (touched.email = true)}
-						aria-invalid={!emailValid}
+						aria-invalid={!emailValid || !!fieldErrors.email?.length}
 						placeholder="john@company.com"
 						class="w-full rounded-md border border-border-secondary bg-bg-primary px-3 py-2 text-base text-text-primary outline-none focus:border-input-focus focus:ring-2 focus:ring-input-focus/20"
 						required
@@ -384,6 +389,11 @@
 						<div class="mt-2 text-sm text-field-error dark:text-field-error">
 							Enter a valid email address.
 						</div>
+					{/if}
+					{#if fieldErrors.email}
+						{#each fieldErrors.email as msg}
+							<div class="mt-2 text-sm text-field-error dark:text-field-error">{msg}</div>
+						{/each}
 					{/if}
 				</label>
 
@@ -395,7 +405,7 @@
 							type={showPassword ? 'text' : 'password'}
 							bind:value={password}
 							onblur={() => (touched.password = true)}
-							aria-invalid={!passwordValid}
+							aria-invalid={!passwordValid || !!fieldErrors.password?.length}
 							placeholder="Min 8 chars, uppercase, lowercase, digit, special char"
 							class="w-full rounded-md border border-border-secondary bg-bg-primary px-3 py-2 pr-10 text-base text-text-primary outline-none focus:border-input-focus focus:ring-2 focus:ring-input-focus/20"
 							required
@@ -466,6 +476,11 @@
 						<div class="mt-2 text-sm text-field-error dark:text-field-error">
 							Password must meet all requirements.
 						</div>
+					{/if}
+					{#if fieldErrors.password}
+						{#each fieldErrors.password as msg}
+							<div class="mt-2 text-sm text-field-error dark:text-field-error">{msg}</div>
+						{/each}
 					{/if}
 				</label>
 

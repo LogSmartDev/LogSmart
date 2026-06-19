@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::{
     Json,
     http::StatusCode,
@@ -15,6 +17,10 @@ pub enum AppError {
     Conflict(String),
     TooManyRequests(String),
     Internal(String),
+    Validation {
+        message: String,
+        fields: HashMap<String, Vec<String>>,
+    },
 }
 
 impl std::fmt::Display for AppError {
@@ -27,22 +33,26 @@ impl std::fmt::Display for AppError {
             AppError::Conflict(msg) => write!(f, "{msg}"),
             AppError::TooManyRequests(msg) => write!(f, "{msg}"),
             AppError::Internal(msg) => write!(f, "{msg}"),
+            AppError::Validation { message, .. } => write!(f, "{message}"),
         }
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
-            AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
-            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),
-            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+        let (status, body) = match self {
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, json!({ "error": msg })),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, json!({ "error": msg })),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, json!({ "error": msg })),
+            AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, json!({ "error": msg })),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, json!({ "error": msg })),
+            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, json!({ "error": msg })),
+            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": msg })),
+            AppError::Validation { message, fields } => {
+                (StatusCode::BAD_REQUEST, json!({ "error": message, "fields": fields }))
+            }
         };
-        (status, Json(json!({ "error": message }))).into_response()
+        (status, Json(body)).into_response()
     }
 }
 
