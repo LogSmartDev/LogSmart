@@ -62,12 +62,10 @@ pub async fn invite_user(
     let user_agent = extract_user_agent(&headers);
 
     // Validate request payload
-    payload
-        .validate()
-        .map_err(|e| {
-            let (msg, fields) = friendly_validation_errors(&e);
-            err_validation(&msg, fields)
-        })?;
+    payload.validate().map_err(|e| {
+        let (msg, fields) = friendly_validation_errors(&e);
+        err_validation(&msg, fields)
+    })?;
 
     // Branch managers can only invite staff to their own branch
     if user.is_branch_manager() {

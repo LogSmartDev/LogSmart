@@ -143,12 +143,10 @@ pub async fn register_company_admin(
     let user_agent = extract_user_agent(&headers);
 
     // Validate request payload
-    payload
-        .validate()
-        .map_err(|e| {
-            let (msg, fields) = friendly_validation_errors(&e);
-            err_validation(&msg, fields)
-        })?;
+    payload.validate().map_err(|e| {
+        let (msg, fields) = friendly_validation_errors(&e);
+        err_validation(&msg, fields)
+    })?;
 
     if let Err(e) = validate_password_policy(&payload.password) {
         return Err(crate::error::AppError::BadRequest(e.to_string()));
@@ -248,12 +246,10 @@ pub async fn login(
     let user_agent = extract_user_agent(&headers);
 
     // Validate request payload
-    payload
-        .validate()
-        .map_err(|e| {
-            let (msg, fields) = friendly_validation_errors(&e);
-            err_validation(&msg, fields)
-        })?;
+    payload.validate().map_err(|e| {
+        let (msg, fields) = friendly_validation_errors(&e);
+        err_validation(&msg, fields)
+    })?;
 
     let (token, user): (String, db::UserRecord) = services::AuthService::verify_credentials(
         &state.postgres,

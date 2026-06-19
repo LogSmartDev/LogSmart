@@ -587,7 +587,9 @@ test.describe('Update Branch', () => {
 			})
 		});
 
-		expect(await updateResponse.text()).toContain("{\"error\":\"Name must be between 1 and 255 characters\",\"fields\":{\"name\":[\"Name must be between 1 and 255 characters\"]}}");
+		expect(await updateResponse.text()).toContain(
+			'{"error":"Name must be between 1 and 255 characters","fields":{"name":["Name must be between 1 and 255 characters"]}}'
+		);
 		expect([400, 422]).toContain(updateResponse.status);
 	});
 });

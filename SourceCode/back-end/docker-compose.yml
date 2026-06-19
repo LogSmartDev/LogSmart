@@ -24,12 +24,13 @@ services:
       - MONGODB_URI_FILE=/run/secrets/mongodb_uri
       - POSTGRES_USER_FILE=/run/secrets/POSTGRES_USER
       - POSTGRES_PASSWORD_FILE=/run/secrets/POSTGRES_PASSWORD
-      - OPENROUTER_MODEL=openrouter/free
+      - OPENROUTER_API_KEY_FILE=/run/secrets/OPENROUTER_API_KEY
       - RP_ID=logsmart.app
       - RP_ORIGIN=https://logsmart.app
       - COOKIE_DOMAIN=logsmart.app
       - FRONTEND_URL=https://logsmart.app
       - DISABLE_RATE_LIMIT=1
+      - APP_ENV=prod
     secrets:
       - source: jwt_secret_v1
         target: jwt_secret
@@ -47,6 +48,8 @@ services:
         target: POSTGRES_USER
       - source: postgres_password_v2
         target: POSTGRES_PASSWORD
+      - source: openrouter_api_key_v1
+        target: OPENROUTER_API_KEY
     deploy:
       replicas: 1
       update_config:
@@ -60,6 +63,8 @@ services:
   mongodb:
     image: mongo:latest
     hostname: mongodb
+    ports:
+      - "27017:27017"
     networks:
       - logsmart-net
     volumes:
@@ -121,7 +126,8 @@ secrets:
     external: true
   postgres_password_v2:
     external: true
-
+  openrouter_api_key_v1:
+    external: true
 volumes:
   mongodb_data:
   postgres_data:

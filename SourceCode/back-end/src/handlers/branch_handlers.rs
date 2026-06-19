@@ -9,7 +9,7 @@ use crate::{
     },
     email,
     middleware::{AuditRequestContext, ManageCompanyUser, ReadCompanyUser},
-    utils::{err_validation, friendly_validation_errors, AuditLogger},
+    utils::{AuditLogger, err_validation, friendly_validation_errors},
 };
 use axum::{Json, extract::State, http::StatusCode};
 use validator::Validate;
@@ -35,12 +35,10 @@ pub async fn create_branch(
     Json(payload): Json<CreateBranchRequest>,
 ) -> Result<(StatusCode, Json<BranchDto>), crate::error::AppError> {
     // Validate request payload
-    payload
-        .validate()
-        .map_err(|e| {
-            let (msg, fields) = friendly_validation_errors(&e);
-            err_validation(&msg, fields)
-        })?;
+    payload.validate().map_err(|e| {
+        let (msg, fields) = friendly_validation_errors(&e);
+        err_validation(&msg, fields)
+    })?;
 
     let company_id = user
         .company_id
@@ -137,12 +135,10 @@ pub async fn update_branch(
     Json(payload): Json<UpdateBranchRequest>,
 ) -> Result<Json<BranchDto>, crate::error::AppError> {
     // Validate request payload
-    payload
-        .validate()
-        .map_err(|e| {
-            let (msg, fields) = friendly_validation_errors(&e);
-            err_validation(&msg, fields)
-        })?;
+    payload.validate().map_err(|e| {
+        let (msg, fields) = friendly_validation_errors(&e);
+        err_validation(&msg, fields)
+    })?;
 
     let company_id = user
         .company_id
