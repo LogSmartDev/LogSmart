@@ -101,9 +101,6 @@ test('confirm_branch_deletion_via_email_link', async ({ browser }) => {
 
 	await page.reload();
 
-	// await confirmPage.goto('http://localhost:5173/branches');
-	// await confirmPage.waitForURL('**/branches');
-
 	await expect(page.getByText(BRANCH_TO_DELETE)).not.toBeVisible();
 
 	await confirmPage.close();
